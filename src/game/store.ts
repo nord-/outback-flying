@@ -65,7 +65,7 @@ function makeInitialState(companyName: string): GameState {
     day: 1,
     fuel: { AVGAS: 2.9, JETA: 2.4 },
     fleet: [starter],
-    availableMissions: generateMissions(MISSION_BOARD_TARGET, 1, 50),
+    availableMissions: generateMissions(MISSION_BOARD_TARGET, 1, 50, [getSpec(starter.specId)]),
     acceptedMissions: [],
     ledger: [],
     stats: { missionsCompleted: 0, missionsFailed: 0, hoursFlown: 0, totalEarned: 0 },
@@ -332,7 +332,10 @@ export const useGame = create<Store>()(
 
           // Refill the board.
           const need = MISSION_BOARD_TARGET - g.availableMissions.length
-          if (need > 0) g.availableMissions.push(...generateMissions(need, g.day, g.reputation))
+          if (need > 0) {
+            const fleetSpecs = g.fleet.map((a) => getSpec(a.specId))
+            g.availableMissions.push(...generateMissions(need, g.day, g.reputation, fleetSpecs))
+          }
 
           return { game: g }
         }),

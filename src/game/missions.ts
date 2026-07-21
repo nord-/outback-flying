@@ -1,7 +1,7 @@
 import { AIRPORTS, BASES, getAirport } from '../data/airports'
 import { distanceNm } from './geo'
 import { computeReward } from './economy'
-import type { Mission, MissionType, Urgency } from './types'
+import type { AircraftSpec, Mission, MissionType, Urgency } from './types'
 
 let seq = 0
 const uid = (prefix: string) => `${prefix}_${Date.now().toString(36)}_${(seq++).toString(36)}`
@@ -99,16 +99,33 @@ function randInt(min: number, max: number): number {
   return min + Math.floor(Math.random() * (max - min + 1))
 }
 
-/** Generate a single mission valid on the given day, scaled by reputation. */
-export function generateMission(day: number, reputation: number): Mission {
+const MIN_DISTANCE_NM = 40
+const MAX_DISTANCE_NM = 350
+const TARGET_MAX_FLIGHT_HOURS = 2
+
+/**
+ * Upper distance bound for a mission, so a leg stays flyable in roughly
+ * `TARGET_MAX_FLIGHT_HOURS` — capped further by the fastest aircraft actually
+ * owned, so a fleet of slow piston aircraft doesn't get missions only a
+ * turboprop could complete in reasonable time.
+ */
+function maxDistanceForFleet(fleetSpecs: AircraftSpec[]): number {
+  if (fleetSpecs.length === 0) return MAX_DISTANCE_NM
+  const fastestCruiseKts = Math.max(...fleetSpecs.map((s) => s.cruiseKts))
+  return Math.min(MAX_DISTANCE_NM, Math.round(fastestCruiseKts * TARGET_MAX_FLIGHT_HOURS))
+}
+
+/** Generate a single mission valid on the given day, scaled by reputation and current fleet. */
+export function generateMission(day: number, reputation: number, fleetSpecs: AircraftSpec[] = []): Mission {
   const cfg = weightedType()
+  const maxDist = maxDistanceForFleet(fleetSpecs)
 
   // Origin favours bases; destination is any other airport within a sensible range.
   const from = Math.random() < 0.7 ? pick(BASES) : pick(AIRPORTS)
   let to = pick(AIRPORTS)
   let dist = distanceNm(from, to)
   let guard = 0
-  while ((to.icao === from.icao || dist < 60 || dist > 1500) && guard++ < 40) {
+  while ((to.icao === from.icao || dist < MIN_DISTANCE_NM || dist > maxDist) && guard++ < 40) {
     to = pick(AIRPORTS)
     dist = distanceNm(from, to)
   }
@@ -140,8 +157,8 @@ export function generateMission(day: number, reputation: number): Mission {
 }
 
 /** Generate a batch of missions for the mission board. */
-export function generateMissions(count: number, day: number, reputation: number): Mission[] {
-  return Array.from({ length: count }, () => generateMission(day, reputation))
+export function generateMissions(count: number, day: number, reputation: number, fleetSpecs: AircraftSpec[] = []): Mission[] {
+  return Array.from({ length: count }, () => generateMission(day, reputation, fleetSpecs))
 }
 
 export const missionTypeLabel = (t: MissionType): string =>
