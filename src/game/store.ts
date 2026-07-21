@@ -1,0 +1,325 @@
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+import type {
+  GameState,
+  LedgerCategory,
+  Mission,
+  OwnedAircraft,
+} from './types'
+import { getSpec } from '../data/aircraft'
+import { generateMissions } from './missions'
+import {
+  conditionLoss,
+  fuelCost,
+  maintenanceCost,
+} from './economy'
+
+const SAVE_VERSION = 1
+const MISSION_BOARD_TARGET = 7
+
+let idSeq = 0
+const uid = (p: string) => `${p}_${Date.now().toString(36)}_${(idSeq++).toString(36)}`
+
+function randomRegistration(): string {
+  const L = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  const s = () => L[Math.floor(Math.random() * L.length)]
+  return `VH-${s()}${s()}${s()}`
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n))
+}
+
+function makeInitialState(companyName: string): GameState {
+  const starter: OwnedAircraft = {
+    id: uid('ac'),
+    specId: 'c210',
+    registration: randomRegistration(),
+    hoursFlown: 0,
+    condition: 100,
+    locationIcao: 'YBAS',
+  }
+  return {
+    version: SAVE_VERSION,
+    companyName: companyName.trim() || 'Outback Air Rescue',
+    balance: 50000,
+    reputation: 50,
+    day: 1,
+    fuel: { AVGAS: 2.9, JETA: 2.4 },
+    fleet: [starter],
+    availableMissions: generateMissions(MISSION_BOARD_TARGET, 1, 50),
+    acceptedMissions: [],
+    ledger: [],
+    stats: { missionsCompleted: 0, missionsFailed: 0, hoursFlown: 0, totalEarned: 0 },
+  }
+}
+
+export interface FlyReport {
+  missionId: string
+  aircraftId: string
+  blockMinutes: number
+  fuelLitres: number
+  landings: number
+}
+
+export interface FlyOutcome {
+  ok: boolean
+  message: string
+  reward?: number
+  fuel?: number
+  maintenance?: number
+  net?: number
+  onTime?: boolean
+}
+
+interface Store {
+  game: GameState | null
+  // lifecycle
+  newGame: (companyName: string) => void
+  resetGame: () => void
+  // missions
+  acceptMission: (missionId: string) => void
+  abandonMission: (missionId: string) => void
+  flyMission: (report: FlyReport) => FlyOutcome
+  repositionAircraft: (aircraftId: string, toIcao: string, blockMinutes: number, fuelLitres: number) => FlyOutcome
+  // fleet
+  buyAircraft: (specId: string, baseIcao: string) => { ok: boolean; message: string }
+  sellAircraft: (aircraftId: string) => void
+  repairAircraft: (aircraftId: string) => void
+  // time
+  advanceDay: () => void
+}
+
+/** Push a ledger entry and return the resulting balance. */
+function post(
+  g: GameState,
+  category: LedgerCategory,
+  description: string,
+  amount: number
+): void {
+  const balanceAfter = Math.round((g.balance + amount) * 100) / 100
+  g.balance = balanceAfter
+  g.ledger.unshift({
+    id: uid('l'),
+    day: g.day,
+    category,
+    description,
+    amount,
+    balanceAfter,
+  })
+  if (amount > 0) g.stats.totalEarned += amount
+}
+
+export const useGame = create<Store>()(
+  persist(
+    (set, get) => ({
+      game: null,
+
+      newGame: (companyName) => set({ game: makeInitialState(companyName) }),
+
+      resetGame: () => set({ game: null }),
+
+      acceptMission: (missionId) =>
+        set((s) => {
+          if (!s.game) return s
+          const g = structuredClone(s.game)
+          const idx = g.availableMissions.findIndex((m) => m.id === missionId)
+          if (idx === -1) return s
+          const [m] = g.availableMissions.splice(idx, 1)
+          g.acceptedMissions.push(m)
+          return { game: g }
+        }),
+
+      abandonMission: (missionId) =>
+        set((s) => {
+          if (!s.game) return s
+          const g = structuredClone(s.game)
+          const idx = g.acceptedMissions.findIndex((m) => m.id === missionId)
+          if (idx === -1) return s
+          const [m] = g.acceptedMissions.splice(idx, 1)
+          post(g, 'PENALTY', `Abandoned "${m.title}"`, -m.penalty)
+          g.reputation = clamp(g.reputation - 3, 0, 100)
+          g.stats.missionsFailed += 1
+          return { game: g }
+        }),
+
+      flyMission: (report) => {
+        const s = get()
+        if (!s.game) return { ok: false, message: 'No active game.' }
+        const g = structuredClone(s.game)
+
+        const mission = g.acceptedMissions.find((m) => m.id === report.missionId)
+        if (!mission) return { ok: false, message: 'Mission not found.' }
+        const ac = g.fleet.find((a) => a.id === report.aircraftId)
+        if (!ac) return { ok: false, message: 'Aircraft not found.' }
+        const spec = getSpec(ac.specId)
+
+        if (ac.locationIcao !== mission.fromIcao)
+          return { ok: false, message: `${ac.registration} is at ${ac.locationIcao}, not ${mission.fromIcao}. Reposition it first.` }
+        if (spec.seats < mission.seatsRequired)
+          return { ok: false, message: `${spec.name} seats ${spec.seats}; mission needs ${mission.seatsRequired}.` }
+        if (spec.rangeNm < mission.distanceNm)
+          return { ok: false, message: `${spec.name} range ${spec.rangeNm} nm is short of ${mission.distanceNm} nm.` }
+        if (report.landings < 1) return { ok: false, message: 'A completed flight needs at least one landing.' }
+        if (report.blockMinutes <= 0 || report.fuelLitres < 0)
+          return { ok: false, message: 'Enter a valid block time and fuel figure.' }
+
+        const price = g.fuel[spec.fuelType]
+        const fuel = fuelCost(report.fuelLitres, price)
+        const maint = maintenanceCost(report.blockMinutes, spec.maintPerHour)
+        const onTime = g.day <= mission.expiresDay
+
+        // Income and expenses.
+        post(g, 'MISSION', `${mission.title}`, mission.reward)
+        post(g, 'FUEL', `Fuel — ${ac.registration} (${report.fuelLitres} L ${spec.fuelType})`, -fuel)
+        post(g, 'MAINTENANCE', `Maintenance — ${ac.registration}`, -maint)
+
+        // Aircraft wear + relocation.
+        ac.hoursFlown = +(ac.hoursFlown + report.blockMinutes / 60).toFixed(2)
+        ac.condition = clamp(+(ac.condition - conditionLoss(report.blockMinutes)).toFixed(2), 0, 100)
+        ac.locationIcao = mission.toIcao
+
+        // Reputation + stats.
+        if (onTime) g.reputation = clamp(g.reputation + mission.reputationReward, 0, 100)
+        else {
+          post(g, 'PENALTY', `Late completion — ${mission.title}`, -mission.penalty)
+          g.reputation = clamp(g.reputation - 2, 0, 100)
+        }
+        g.stats.missionsCompleted += 1
+        g.stats.hoursFlown = +(g.stats.hoursFlown + report.blockMinutes / 60).toFixed(2)
+
+        // Remove from accepted.
+        g.acceptedMissions = g.acceptedMissions.filter((m) => m.id !== mission.id)
+
+        set({ game: g })
+        const net = mission.reward - fuel - maint - (onTime ? 0 : mission.penalty)
+        return {
+          ok: true,
+          onTime,
+          reward: mission.reward,
+          fuel,
+          maintenance: maint,
+          net,
+          message: onTime
+            ? `Mission complete. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}.`
+            : `Completed late — reputation and a penalty applied. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}.`,
+        }
+      },
+
+      repositionAircraft: (aircraftId, toIcao, blockMinutes, fuelLitres) => {
+        const s = get()
+        if (!s.game) return { ok: false, message: 'No active game.' }
+        const g = structuredClone(s.game)
+        const ac = g.fleet.find((a) => a.id === aircraftId)
+        if (!ac) return { ok: false, message: 'Aircraft not found.' }
+        if (ac.locationIcao === toIcao) return { ok: false, message: 'Aircraft is already there.' }
+        if (blockMinutes <= 0 || fuelLitres < 0) return { ok: false, message: 'Enter a valid block time and fuel figure.' }
+        const spec = getSpec(ac.specId)
+        const price = g.fuel[spec.fuelType]
+        const fuel = fuelCost(fuelLitres, price)
+        const maint = maintenanceCost(blockMinutes, spec.maintPerHour)
+
+        post(g, 'FUEL', `Ferry fuel — ${ac.registration} → ${toIcao}`, -fuel)
+        post(g, 'MAINTENANCE', `Maintenance — ${ac.registration}`, -maint)
+        ac.hoursFlown = +(ac.hoursFlown + blockMinutes / 60).toFixed(2)
+        ac.condition = clamp(+(ac.condition - conditionLoss(blockMinutes)).toFixed(2), 0, 100)
+        ac.locationIcao = toIcao
+        g.stats.hoursFlown = +(g.stats.hoursFlown + blockMinutes / 60).toFixed(2)
+
+        set({ game: g })
+        return { ok: true, message: `Repositioned ${ac.registration} to ${toIcao}. Cost $${(fuel + maint).toLocaleString()}.` }
+      },
+
+      buyAircraft: (specId, baseIcao) => {
+        const s = get()
+        if (!s.game) return { ok: false, message: 'No active game.' }
+        const spec = getSpec(specId)
+        if (s.game.balance < spec.purchaseCost)
+          return { ok: false, message: `Not enough funds. Need $${spec.purchaseCost.toLocaleString()}.` }
+        const g = structuredClone(s.game)
+        const ac: OwnedAircraft = {
+          id: uid('ac'),
+          specId,
+          registration: randomRegistration(),
+          hoursFlown: 0,
+          condition: 100,
+          locationIcao: baseIcao,
+        }
+        g.fleet.push(ac)
+        post(g, 'AIRCRAFT_PURCHASE', `Bought ${spec.name} (${ac.registration})`, -spec.purchaseCost)
+        set({ game: g })
+        return { ok: true, message: `${spec.name} ${ac.registration} added to your fleet at ${baseIcao}.` }
+      },
+
+      sellAircraft: (aircraftId) =>
+        set((s) => {
+          if (!s.game) return s
+          const g = structuredClone(s.game)
+          const ac = g.fleet.find((a) => a.id === aircraftId)
+          if (!ac) return s
+          const spec = getSpec(ac.specId)
+          // Resale scales with condition; used aircraft take a haircut.
+          const resale = Math.round(spec.purchaseCost * 0.7 * (ac.condition / 100))
+          g.fleet = g.fleet.filter((a) => a.id !== aircraftId)
+          post(g, 'AIRCRAFT_SALE', `Sold ${spec.name} (${ac.registration})`, resale)
+          return { game: g }
+        }),
+
+      repairAircraft: (aircraftId) =>
+        set((s) => {
+          if (!s.game) return s
+          const g = structuredClone(s.game)
+          const ac = g.fleet.find((a) => a.id === aircraftId)
+          if (!ac || ac.condition >= 100) return s
+          const spec = getSpec(ac.specId)
+          const missing = 100 - ac.condition
+          const cost = Math.round((spec.purchaseCost * 0.0009) * missing)
+          if (g.balance < cost) return s
+          post(g, 'REPAIR', `Repaired ${ac.registration} (+${missing.toFixed(0)}%)`, -cost)
+          ac.condition = 100
+          return { game: g }
+        }),
+
+      advanceDay: () =>
+        set((s) => {
+          if (!s.game) return s
+          const g = structuredClone(s.game)
+          g.day += 1
+
+          // Daily fixed costs across the fleet.
+          const daily = g.fleet.reduce((sum, a) => sum + getSpec(a.specId).dailyFixedCost, 0)
+          if (daily > 0) post(g, 'DAILY_COST', `Hangar & insurance (${g.fleet.length} aircraft)`, -daily)
+
+          // Expire accepted missions that are now past deadline (failures).
+          const stillValid: Mission[] = []
+          for (const m of g.acceptedMissions) {
+            if (g.day > m.expiresDay) {
+              post(g, 'PENALTY', `Missed deadline — ${m.title}`, -m.penalty)
+              g.reputation = clamp(g.reputation - 4, 0, 100)
+              g.stats.missionsFailed += 1
+            } else {
+              stillValid.push(m)
+            }
+          }
+          g.acceptedMissions = stillValid
+
+          // Expire stale board postings.
+          g.availableMissions = g.availableMissions.filter((m) => g.day <= m.expiresDay)
+
+          // Fuel price drift ±8%.
+          const drift = (p: number) => +Math.max(1.2, p * (0.92 + Math.random() * 0.16)).toFixed(2)
+          g.fuel = { AVGAS: drift(g.fuel.AVGAS), JETA: drift(g.fuel.JETA) }
+
+          // Refill the board.
+          const need = MISSION_BOARD_TARGET - g.availableMissions.length
+          if (need > 0) g.availableMissions.push(...generateMissions(need, g.day, g.reputation))
+
+          return { game: g }
+        }),
+    }),
+    {
+      name: 'outback-flying-save',
+      partialize: (s) => ({ game: s.game }),
+    }
+  )
+)
