@@ -86,6 +86,8 @@ export interface FuelPrices {
 export interface GameState {
   version: number
   companyName: string
+  homeBaseIcao: string // operation's home base (RFDS-style); default YBAS
+  pilotLocationIcao: string // where the single pilot currently is
   balance: number
   reputation: number // 0..100
   day: number

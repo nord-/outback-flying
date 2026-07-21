@@ -59,6 +59,12 @@ npm run electron:build # package a desktop app → release/
 > a proxy that blocks it, the *web* build still works; set
 > `ELECTRON_SKIP_BINARY_DOWNLOAD=1` to install without the desktop runtime.
 
+## Branching, CI & releases
+
+- **`master`** is the default and production branch. GitHub Actions validates every PR into `master` and every push to it (`npm ci`, typecheck, tests, build).
+- **Versioning is driven by PR labels.** Label a PR `major`, `minor`, or `patch` before merging it into `master` — on merge, a workflow bumps `package.json`, tags the commit (`vX.Y.Z`), builds a Windows installer, and publishes a GitHub Release with the installer attached. No label → no release.
+- See `.github/workflows/ci.yml` and `.github/workflows/release.yml`.
+
 ## Project layout
 
 ```
@@ -75,10 +81,27 @@ components only render state and dispatch actions through the Zustand store
 
 ## Roadmap ideas
 
+### High priority
+
+- **SimConnect / log-file integration** to auto-verify flights — read block
+  time, fuel burn and landings straight from the simulator instead of trusting
+  hand-entered figures.
+- **A real airport database with fuel availability.** Not every strip sells
+  fuel, and those that do don't all carry the right type. An outback field might
+  have Avgas but no Jet A-1 (or nothing at all), so range planning and where you
+  can refuel become part of the challenge — you may need to tanker fuel or route
+  via a field that has what your aircraft burns.
+- **Multiple regions / bases around the world** — pick your starting region when
+  you begin a new game (the Australian outback, the African bush, the North
+  American backcountry, etc.), each with its own airports, distances and
+  flavour. **Transfer between regions** while keeping your experience, reputation
+  and cash, so a single operation can expand across the globe.
+
+### Later
+
 - Multi-leg missions and en-route fuel stops
 - Hiring pilots so you can run several aircraft in parallel
 - Save export/import and multiple save slots
-- Optional SimConnect / log-file integration to auto-verify flights
 - Weather, night ops and seasonal demand
 
 ## License

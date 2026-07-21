@@ -14,7 +14,7 @@ import {
   maintenanceCost,
 } from './economy'
 
-const SAVE_VERSION = 1
+const SAVE_VERSION = 2
 const MISSION_BOARD_TARGET = 7
 
 let idSeq = 0
@@ -30,6 +30,22 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
 }
 
+export interface PersistedSave {
+  game: GameState | null
+}
+
+/** Migrate an older persisted save (pre-v2) forward to the current SAVE_VERSION. */
+export function migratePersistedState(persisted: unknown, version: number): PersistedSave {
+  const state = persisted as PersistedSave
+  const g = state?.game
+  if (!g) return state // no game started yet — nothing to migrate
+  if (version > SAVE_VERSION) return state // newer save format than this build understands — don't touch it
+  if (!g.homeBaseIcao) g.homeBaseIcao = 'YBAS'
+  if (!g.pilotLocationIcao) g.pilotLocationIcao = g.fleet[0]?.locationIcao ?? 'YBAS'
+  g.version = SAVE_VERSION
+  return state
+}
+
 function makeInitialState(companyName: string): GameState {
   const starter: OwnedAircraft = {
     id: uid('ac'),
@@ -42,6 +58,8 @@ function makeInitialState(companyName: string): GameState {
   return {
     version: SAVE_VERSION,
     companyName: companyName.trim() || 'Outback Air Rescue',
+    homeBaseIcao: 'YBAS',
+    pilotLocationIcao: 'YBAS',
     balance: 50000,
     reputation: 50,
     day: 1,
@@ -178,6 +196,7 @@ export const useGame = create<Store>()(
         ac.hoursFlown = +(ac.hoursFlown + report.blockMinutes / 60).toFixed(2)
         ac.condition = clamp(+(ac.condition - conditionLoss(report.blockMinutes)).toFixed(2), 0, 100)
         ac.locationIcao = mission.toIcao
+        g.pilotLocationIcao = mission.toIcao
 
         // Reputation + stats.
         if (onTime) g.reputation = clamp(g.reputation + mission.reputationReward, 0, 100)
@@ -224,6 +243,7 @@ export const useGame = create<Store>()(
         ac.hoursFlown = +(ac.hoursFlown + blockMinutes / 60).toFixed(2)
         ac.condition = clamp(+(ac.condition - conditionLoss(blockMinutes)).toFixed(2), 0, 100)
         ac.locationIcao = toIcao
+        g.pilotLocationIcao = toIcao
         g.stats.hoursFlown = +(g.stats.hoursFlown + blockMinutes / 60).toFixed(2)
 
         set({ game: g })
@@ -319,7 +339,9 @@ export const useGame = create<Store>()(
     }),
     {
       name: 'outback-flying-save',
+      version: SAVE_VERSION,
       partialize: (s) => ({ game: s.game }),
+      migrate: (persisted, version) => migratePersistedState(persisted, version),
     }
   )
 )

@@ -2,6 +2,7 @@ import { useGame } from '../game/store'
 import { getSpec } from '../data/aircraft'
 import { getAirport } from '../data/airports'
 import { money, price } from '../game/format'
+import { OperationsMap } from './OperationsMap'
 
 export function Dashboard() {
   const game = useGame((s) => s.game)!
@@ -63,6 +64,10 @@ export function Dashboard() {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="mt">
+        <OperationsMap />
       </div>
     </div>
   )
