@@ -31,7 +31,7 @@ function game(over: Partial<GameState> = {}): GameState {
     reputation: 50,
     day: 1,
     fuel: { AVGAS: 2.9, JETA: 2.4 },
-    fleet: [{ id: 'ac1', specId: 'c210', registration: 'VH-ABC', hoursFlown: 0, condition: 100, locationIcao: 'YBAS' }],
+    fleet: [{ id: 'ac1', specId: 'c172', registration: 'VH-ABC', hoursFlown: 0, condition: 100, locationIcao: 'YBAS' }],
     availableMissions: [],
     acceptedMissions: [],
     ledger: [],

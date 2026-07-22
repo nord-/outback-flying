@@ -1,7 +1,7 @@
 import { useGame } from '../game/store'
 import { getSpec } from '../data/aircraft'
 import { getAirport } from '../data/airports'
-import { money, price } from '../game/format'
+import { money, price, FUEL_LABEL } from '../game/format'
 import { OperationsMap } from './OperationsMap'
 
 export function Dashboard() {
@@ -40,8 +40,8 @@ export function Dashboard() {
         <div className="card">
           <h3>Fuel prices</h3>
           <div className="facts mission mt">
-            <span>Avgas <b>{price(game.fuel.AVGAS)}</b>/L</span>
-            <span>Jet A-1 <b>{price(game.fuel.JETA)}</b>/L</span>
+            <span>{FUEL_LABEL.AVGAS} <b>{price(game.fuel.AVGAS)}</b>/L</span>
+            <span>{FUEL_LABEL.JETA} <b>{price(game.fuel.JETA)}</b>/L</span>
           </div>
           <p className="tiny muted mt">Prices drift a little each day. Fuel is billed from your reported burn.</p>
         </div>

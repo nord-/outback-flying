@@ -82,6 +82,12 @@ button { font-family: inherit; cursor: pointer; }
 }
 .card h3 { margin: 0 0 4px; font-size: 15px; }
 .card .sub { color: var(--muted); font-size: 12.5px; }
+.card.starter { color: var(--text); transition: border-color 0.12s ease, box-shadow 0.12s ease; }
+.card.starter:hover { border-color: var(--ochre-2); }
+.card.starter.selected {
+  border-color: var(--ochre);
+  box-shadow: 0 0 0 2px rgba(224, 138, 60, 0.35), var(--shadow);
+}
 
 .kpi { display: flex; flex-direction: column; gap: 4px; }
 .kpi .k-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--faint); }

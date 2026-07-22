@@ -115,6 +115,18 @@ function maxDistanceForFleet(fleetSpecs: AircraftSpec[]): number {
   return Math.min(MAX_DISTANCE_NM, Math.round(fastestCruiseKts * TARGET_MAX_FLIGHT_HOURS))
 }
 
+/**
+ * Upper bound for a mission's seat requirement: the largest cabin actually
+ * owned, so a small-cabin fleet (e.g. a 2-seat Cessna 152) doesn't get missions
+ * it structurally cannot fly. Falls back to the largest seat count any mission
+ * type asks for when the fleet is empty.
+ */
+const MAX_SEATS_ANY_MISSION = Math.max(...TYPE_CONFIG.map((c) => c.seats[1]))
+function maxSeatsForFleet(fleetSpecs: AircraftSpec[]): number {
+  if (fleetSpecs.length === 0) return MAX_SEATS_ANY_MISSION
+  return Math.max(...fleetSpecs.map((s) => s.seats))
+}
+
 interface DestinationCandidate {
   airport: Airport
   distance: number
@@ -149,7 +161,10 @@ export function generateMission(day: number, reputation: number, fleetSpecs: Air
   const from = Math.random() < 0.7 ? pick(BASES) : pick(AIRPORTS)
   const { airport: to, distance: dist } = pickDestination(from, maxDist)
 
-  const seats = randInt(cfg.seats[0], cfg.seats[1])
+  const maxSeats = maxSeatsForFleet(fleetSpecs)
+  const hi = Math.min(cfg.seats[1], maxSeats)
+  const lo = Math.min(cfg.seats[0], hi)
+  const seats = randInt(lo, hi)
   const urgency = rollUrgency(cfg.type)
   const [dMin, dMax] = DEADLINE_DAYS[urgency]
   const reward = computeReward(dist, seats, urgency, reputation)

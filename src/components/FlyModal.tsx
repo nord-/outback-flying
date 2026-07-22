@@ -9,7 +9,7 @@ import {
   suggestedBlockMinutes,
   suggestedFuelLitres,
 } from '../game/economy'
-import { money, price, signedMoney } from '../game/format'
+import { money, price, signedMoney, FUEL_LABEL } from '../game/format'
 import type { Mission } from '../game/types'
 
 export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () => void }) {
@@ -129,7 +129,7 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
                   <span className="hint">Suggested {suggested.block} min</span>
                 </div>
                 <div className="field">
-                  <label>Fuel used (litres, {selected?.spec.fuelType})</label>
+                  <label>Fuel used (litres, {selected && FUEL_LABEL[selected.spec.fuelType]})</label>
                   <input type="number" min={0} value={fuel} onChange={(e) => setFuel(e.target.value)} />
                   <span className="hint">Suggested {suggested.fuel} L @ {price(fuelPrice)}/L</span>
                 </div>

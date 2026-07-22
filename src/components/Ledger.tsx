@@ -11,12 +11,13 @@ const CAT_LABEL: Record<LedgerCategory, string> = {
   DAILY_COST: 'Overheads',
   REPAIR: 'Repair',
   PENALTY: 'Penalty',
+  OPENING: 'Opening',
 }
 
 export function Ledger() {
   const game = useGame((s) => s.game)!
-  const income = game.ledger.filter((e) => e.amount > 0).reduce((s, e) => s + e.amount, 0)
-  const expense = game.ledger.filter((e) => e.amount < 0).reduce((s, e) => s + e.amount, 0)
+  const income = game.ledger.filter((e) => e.category !== 'OPENING' && e.amount > 0).reduce((s, e) => s + e.amount, 0)
+  const expense = game.ledger.filter((e) => e.category !== 'OPENING' && e.amount < 0).reduce((s, e) => s + e.amount, 0)
 
   return (
     <div>

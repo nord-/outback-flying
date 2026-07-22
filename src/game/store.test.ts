@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
-import { migratePersistedState } from './store'
+import { describe, it, expect, afterEach } from 'vitest'
+import { migratePersistedState, useGame } from './store'
+import { getSpec } from '../data/aircraft'
 import type { GameState, OwnedAircraft } from './types'
 
 const aircraft = (locationIcao: string): OwnedAircraft => ({
@@ -35,7 +36,7 @@ describe('migratePersistedState', () => {
     const out = migratePersistedState(legacySave('YBHI'), 1)
     expect(out.game?.homeBaseIcao).toBe('YBAS')
     expect(out.game?.pilotLocationIcao).toBe('YBHI')
-    expect(out.game?.version).toBe(2)
+    expect(out.game?.version).toBe(3)
   })
 
   it('falls back to YBAS when the fleet is empty', () => {
@@ -60,9 +61,62 @@ describe('migratePersistedState', () => {
 
   it('leaves a save from a newer version untouched', () => {
     const save = legacySave('YBHI')
-    save.game!.version = 3
-    const out = migratePersistedState(save, 3)
-    expect(out.game?.version).toBe(3)
+    save.game!.version = 4
+    const out = migratePersistedState(save, 4)
+    expect(out.game?.version).toBe(4)
     expect(out.game?.homeBaseIcao).toBeUndefined()
+  })
+})
+
+describe('newGame starter selection', () => {
+  it('starts with the chosen aircraft and its documented balance', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const g = useGame.getState().game!
+    expect(g.fleet).toHaveLength(1)
+    expect(g.fleet[0].specId).toBe('bonanza')
+    expect(g.balance).toBe(1000)
+  })
+
+  it('records the starting balance as an OPENING ledger entry', () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const g = useGame.getState().game!
+    expect(g.balance).toBe(-20000)
+    const opening = g.ledger.find((e) => e.category === 'OPENING')
+    expect(opening?.amount).toBe(-20000)
+    expect(opening?.balanceAfter).toBe(-20000)
+  })
+
+  it('does not count opening capital as earnings', () => {
+    useGame.getState().newGame('Test Air', 'c152') // +30000, a positive opening entry
+    const g = useGame.getState().game!
+    expect(g.balance).toBe(30000)
+    expect(g.stats.totalEarned).toBe(0)
+  })
+
+  it('falls back to the Cessna 172 for an invalid starter id', () => {
+    useGame.getState().newGame('Test Air', 'nope')
+    const g = useGame.getState().game!
+    expect(g.fleet[0].specId).toBe('c172')
+    expect(g.balance).toBe(20000)
+    expect(() => getSpec(g.fleet[0].specId)).not.toThrow()
+  })
+
+  afterEach(() => useGame.getState().resetGame())
+})
+
+describe('migratePersistedState catalogue remap', () => {
+  it('remaps removed spec ids and stamps version 3', () => {
+    const out = migratePersistedState(legacySave('YBAS'), 2)
+    // legacySave() builds a fleet aircraft with the removed specId 'c210'
+    expect(out.game?.fleet[0].specId).toBe('bonanza')
+    expect(out.game?.version).toBe(3)
+    expect(() => getSpec(out.game!.fleet[0].specId)).not.toThrow()
+  })
+
+  it('remaps a PA-31 fleet aircraft to the Baron', () => {
+    const save = legacySave('YBAS')
+    save.game!.fleet[0].specId = 'pa31'
+    const out = migratePersistedState(save, 2)
+    expect(out.game?.fleet[0].specId).toBe('baron')
   })
 })

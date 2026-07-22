@@ -68,6 +68,7 @@ export type LedgerCategory =
   | 'DAILY_COST'
   | 'REPAIR'
   | 'PENALTY'
+  | 'OPENING'
 
 export interface LedgerEntry {
   id: string
