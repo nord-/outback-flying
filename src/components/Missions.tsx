@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useGame } from '../game/store'
 import { getAirport } from '../data/airports'
 import { getSpec } from '../data/aircraft'
@@ -8,6 +8,7 @@ import { money, URGENCY_LABEL } from '../game/format'
 import { bearingDeg, compass } from '../game/geo'
 import type { Mission } from '../game/types'
 import { FlyModal } from './FlyModal'
+import { useNav } from './ui'
 
 function deadlineText(m: Mission, day: number): { text: string; warn: boolean } {
   const left = m.expiresDay - day
@@ -21,10 +22,14 @@ function MissionCard({
   m,
   accepted,
   onFly,
+  highlighted,
+  cardRef,
 }: {
   m: Mission
   accepted: boolean
   onFly: (m: Mission) => void
+  highlighted: boolean
+  cardRef: (el: HTMLDivElement | null) => void
 }) {
   const game = useGame((s) => s.game)!
   const accept = useGame((s) => s.acceptMission)
@@ -44,7 +49,7 @@ function MissionCard({
     : null
 
   return (
-    <div className="card mission">
+    <div className={`card mission${highlighted ? ' highlight' : ''}`} ref={cardRef}>
       <div className="head">
         <span className={`badge ${m.urgency.toLowerCase()}`}>{URGENCY_LABEL[m.urgency]}</span>
         <span className="badge type">{missionTypeLabel(m.type)}</span>
@@ -81,6 +86,40 @@ export function Missions() {
   const game = useGame((s) => s.game)!
   const [flying, setFlying] = useState<Mission | null>(null)
 
+  const { selectedMissionId, setSelectedMissionId } = useNav()
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const highlightTimeout = useRef<number | null>(null)
+
+  // When the map hands us a mission, scroll it into view and flash it.
+  // Guard the case where the id has no matching card (e.g. it expired between
+  // click and render): just clear the selection without touching a ref.
+  // The fade timeout is (re)armed here too — selectedMissionId always cycles
+  // through null between picks, so this fires even for the same mission id
+  // twice in a row, unlike keying a separate effect off highlightId.
+  useEffect(() => {
+    if (!selectedMissionId) return
+    const el = cardRefs.current.get(selectedMissionId)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      setHighlightId(selectedMissionId)
+      if (highlightTimeout.current) window.clearTimeout(highlightTimeout.current)
+      highlightTimeout.current = window.setTimeout(() => setHighlightId(null), 2000)
+    }
+    setSelectedMissionId(null)
+  }, [selectedMissionId, setSelectedMissionId])
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeout.current) window.clearTimeout(highlightTimeout.current)
+    }
+  }, [])
+
+  const registerCard = (id: string) => (el: HTMLDivElement | null) => {
+    if (el) cardRefs.current.set(id, el)
+    else cardRefs.current.delete(id)
+  }
+
   // Sort available by urgency then reward.
   const order = { EMERGENCY: 0, PRIORITY: 1, ROUTINE: 2 } as const
   const available = [...game.availableMissions].sort(
@@ -96,7 +135,14 @@ export function Missions() {
       ) : (
         <div className="grid auto">
           {accepted.map((m) => (
-            <MissionCard key={m.id} m={m} accepted onFly={setFlying} />
+            <MissionCard
+              key={m.id}
+              m={m}
+              accepted
+              onFly={setFlying}
+              highlighted={highlightId === m.id}
+              cardRef={registerCard(m.id)}
+            />
           ))}
         </div>
       )}
@@ -107,7 +153,14 @@ export function Missions() {
       ) : (
         <div className="grid auto">
           {available.map((m) => (
-            <MissionCard key={m.id} m={m} accepted={false} onFly={setFlying} />
+            <MissionCard
+              key={m.id}
+              m={m}
+              accepted={false}
+              onFly={setFlying}
+              highlighted={highlightId === m.id}
+              cardRef={registerCard(m.id)}
+            />
           ))}
         </div>
       )}

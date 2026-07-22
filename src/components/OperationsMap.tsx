@@ -1,4 +1,4 @@
-import { Fragment, useEffect } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import {
   MapContainer,
   TileLayer,
@@ -16,6 +16,8 @@ import 'leaflet/dist/leaflet.css'
 import { useGame } from '../game/store'
 import { deriveMapView, type MapPoint } from '../game/mapView'
 import type { Urgency } from '../game/types'
+import { useNav } from './ui'
+import { MissionPickerDialog } from './MissionPickerDialog'
 
 const URGENCY_COLOR: Record<Urgency, string> = {
   EMERGENCY: '#e05a5a',
@@ -31,6 +33,32 @@ const pilotIcon = L.divIcon({ className: 'map-pin', html: '🧑‍✈️', iconS
 const planeIcon = L.divIcon({ className: 'map-pin', html: '🛩️', iconSize: [22, 22], iconAnchor: [11, 11] })
 
 const ll = (p: MapPoint): LatLngExpression => [p.lat, p.lon]
+
+function MissionEndpointMarkers({
+  points,
+  color,
+  onSelect,
+}: {
+  points: [MapPoint, MapPoint]
+  color: string
+  onSelect: (icao: string) => void
+}) {
+  return (
+    <>
+      {points.map((p, i) => (
+        <CircleMarker
+          key={i}
+          center={ll(p)}
+          radius={4}
+          pathOptions={{ color, weight: 1, fillColor: color, fillOpacity: 0.9 }}
+          eventHandlers={{ click: () => onSelect(p.icao) }}
+        >
+          <Tooltip>{p.icao} · {p.name}</Tooltip>
+        </CircleMarker>
+      ))}
+    </>
+  )
+}
 
 function FitBounds({ points }: { points: MapPoint[] }) {
   const map = useMap()
@@ -56,6 +84,8 @@ function FitBounds({ points }: { points: MapPoint[] }) {
 export function OperationsMap() {
   const game = useGame((s) => s.game)!
   const view = deriveMapView(game)
+  const { setTab, setSelectedMissionId } = useNav()
+  const [pickerIcao, setPickerIcao] = useState<string | null>(null)
 
   const focusPoints: MapPoint[] = [
     view.homeBase,
@@ -93,24 +123,15 @@ export function OperationsMap() {
               <Polyline
                 positions={[ll(m.from), ll(m.to)]}
                 pathOptions={{ color: URGENCY_COLOR[m.urgency], weight: 2, dashArray: '2 6', opacity: 0.8 }}
+                eventHandlers={{ click: () => setPickerIcao(m.to.icao) }}
               >
                 <Tooltip>{m.title} · {m.urgency} · {m.from.icao} → {m.to.icao}</Tooltip>
               </Polyline>
-              {[m.from, m.to].map((p, i) => (
-                <CircleMarker
-                  key={i}
-                  center={ll(p)}
-                  radius={4}
-                  pathOptions={{
-                    color: URGENCY_COLOR[m.urgency],
-                    weight: 1,
-                    fillColor: URGENCY_COLOR[m.urgency],
-                    fillOpacity: 0.9,
-                  }}
-                >
-                  <Tooltip>{p.icao} · {p.name}</Tooltip>
-                </CircleMarker>
-              ))}
+              <MissionEndpointMarkers
+                points={[m.from, m.to]}
+                color={URGENCY_COLOR[m.urgency]}
+                onSelect={setPickerIcao}
+              />
             </Fragment>
           ))}
 
@@ -123,9 +144,15 @@ export function OperationsMap() {
               <Polyline
                 positions={[ll(m.from), ll(m.to)]}
                 pathOptions={{ color: URGENCY_COLOR[m.urgency], weight: 3.5, opacity: 1 }}
+                eventHandlers={{ click: () => setPickerIcao(m.to.icao) }}
               >
                 <Tooltip>Accepted · {m.title} · {m.urgency} · {m.from.icao} → {m.to.icao}</Tooltip>
               </Polyline>
+              <MissionEndpointMarkers
+                points={[m.from, m.to]}
+                color={URGENCY_COLOR[m.urgency]}
+                onSelect={setPickerIcao}
+              />
             </Fragment>
           ))}
 
@@ -143,6 +170,17 @@ export function OperationsMap() {
           </Marker>
         </MapContainer>
       </div>
+      {pickerIcao && (
+        <MissionPickerDialog
+          icao={pickerIcao}
+          onClose={() => setPickerIcao(null)}
+          onSelect={(id) => {
+            setSelectedMissionId(id)
+            setTab('missions')
+            setPickerIcao(null)
+          }}
+        />
+      )}
     </div>
   )
 }
