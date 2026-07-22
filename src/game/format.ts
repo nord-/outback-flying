@@ -1,4 +1,10 @@
-import type { Urgency } from './types'
+import type { FuelType, Urgency } from './types'
+
+/** Display labels for fuel types. The stored enum value stays `JETA`; only the UI reads `JET A1`. */
+export const FUEL_LABEL: Record<FuelType, string> = {
+  AVGAS: 'AVGAS',
+  JETA: 'JET A1',
+}
 
 export const money = (n: number): string =>
   (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-AU')

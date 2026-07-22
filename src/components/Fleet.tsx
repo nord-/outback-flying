@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useGame } from '../game/store'
 import { getSpec } from '../data/aircraft'
 import { getAirport } from '../data/airports'
-import { money } from '../game/format'
+import { money, FUEL_LABEL } from '../game/format'
 import type { OwnedAircraft } from '../game/types'
 import { RepositionModal } from './RepositionModal'
 
@@ -32,7 +32,7 @@ function AircraftCard({ ac, onReposition }: { ac: OwnedAircraft; onReposition: (
           <h3>{ac.registration}</h3>
           <div className="sub">{spec.name} · {spec.category}</div>
         </div>
-        <span className="pill">{spec.fuelType}</span>
+        <span className="pill">{FUEL_LABEL[spec.fuelType]}</span>
       </div>
 
       <div className="facts mission" style={{ marginTop: 12 }}>

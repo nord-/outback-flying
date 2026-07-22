@@ -10,7 +10,7 @@ import {
   suggestedBlockMinutes,
   suggestedFuelLitres,
 } from '../game/economy'
-import { money, price } from '../game/format'
+import { money, price, FUEL_LABEL } from '../game/format'
 import type { OwnedAircraft } from '../game/types'
 
 export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft; onClose: () => void }) {
@@ -85,7 +85,7 @@ export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft
               <span className="hint">Suggested {sBlock} min</span>
             </div>
             <div className="field">
-              <label>Fuel used (litres, {spec.fuelType})</label>
+              <label>Fuel used (litres, {FUEL_LABEL[spec.fuelType]})</label>
               <input type="number" min={0} value={fuel} onChange={(e) => setFuel(e.target.value)} />
               <span className="hint">Suggested {sFuel} L @ {price(fuelPrice)}/L</span>
             </div>

@@ -6,7 +6,7 @@ import type {
   Mission,
   OwnedAircraft,
 } from './types'
-import { getSpec } from '../data/aircraft'
+import { getSpec, STARTER_OPTIONS, DEFAULT_STARTER } from '../data/aircraft'
 import { generateMissions } from './missions'
 import {
   conditionLoss,
@@ -14,7 +14,7 @@ import {
   maintenanceCost,
 } from './economy'
 
-const SAVE_VERSION = 2
+const SAVE_VERSION = 3
 const MISSION_BOARD_TARGET = 7
 
 let idSeq = 0
@@ -34,7 +34,8 @@ export interface PersistedSave {
   game: GameState | null
 }
 
-/** Migrate an older persisted save (pre-v2) forward to the current SAVE_VERSION. */
+/** Migrate an older persisted save (pre-v3) forward to the current SAVE_VERSION
+ *  (adds v2 base/pilot fields; remaps v3 removed aircraft spec ids). */
 export function migratePersistedState(persisted: unknown, version: number): PersistedSave {
   const state = persisted as PersistedSave
   const g = state?.game
@@ -42,25 +43,37 @@ export function migratePersistedState(persisted: unknown, version: number): Pers
   if (version > SAVE_VERSION) return state // newer save format than this build understands — don't touch it
   if (!g.homeBaseIcao) g.homeBaseIcao = 'YBAS'
   if (!g.pilotLocationIcao) g.pilotLocationIcao = g.fleet[0]?.locationIcao ?? 'YBAS'
+
+  // Catalogue rework (v3): the Cessna 210 and PA-31 Navajo were removed. Remap
+  // any owned aircraft that still reference them so getSpec() does not throw.
+  const SPEC_REMAP: Record<string, string> = { c210: 'bonanza', pa31: 'baron' }
+  for (const ac of g.fleet ?? []) {
+    if (Object.prototype.hasOwnProperty.call(SPEC_REMAP, ac.specId)) ac.specId = SPEC_REMAP[ac.specId]
+  }
+
   g.version = SAVE_VERSION
   return state
 }
 
-function makeInitialState(companyName: string): GameState {
+function makeInitialState(companyName: string, startSpecId: string): GameState {
+  const option =
+    STARTER_OPTIONS.find((o) => o.specId === startSpecId) ??
+    STARTER_OPTIONS.find((o) => o.specId === DEFAULT_STARTER) ??
+    STARTER_OPTIONS[0]
   const starter: OwnedAircraft = {
     id: uid('ac'),
-    specId: 'c210',
+    specId: option.specId,
     registration: randomRegistration(),
     hoursFlown: 0,
     condition: 100,
     locationIcao: 'YBAS',
   }
-  return {
+  const g: GameState = {
     version: SAVE_VERSION,
     companyName: companyName.trim() || 'Outback Air Rescue',
     homeBaseIcao: 'YBAS',
     pilotLocationIcao: 'YBAS',
-    balance: 50000,
+    balance: 0,
     reputation: 50,
     day: 1,
     fuel: { AVGAS: 2.9, JETA: 2.4 },
@@ -70,6 +83,13 @@ function makeInitialState(companyName: string): GameState {
     ledger: [],
     stats: { missionsCompleted: 0, missionsFailed: 0, hoursFlown: 0, totalEarned: 0 },
   }
+  post(
+    g,
+    'OPENING',
+    option.startingBalance >= 0 ? 'Opening capital' : 'Startup loan',
+    option.startingBalance
+  )
+  return g
 }
 
 export interface FlyReport {
@@ -93,7 +113,7 @@ export interface FlyOutcome {
 interface Store {
   game: GameState | null
   // lifecycle
-  newGame: (companyName: string) => void
+  newGame: (companyName: string, startSpecId: string) => void
   resetGame: () => void
   // missions
   acceptMission: (missionId: string) => void
@@ -125,7 +145,7 @@ function post(
     amount,
     balanceAfter,
   })
-  if (amount > 0) g.stats.totalEarned += amount
+  if (amount > 0 && category !== 'OPENING') g.stats.totalEarned += amount
 }
 
 export const useGame = create<Store>()(
@@ -133,7 +153,7 @@ export const useGame = create<Store>()(
     (set, get) => ({
       game: null,
 
-      newGame: (companyName) => set({ game: makeInitialState(companyName) }),
+      newGame: (companyName, startSpecId) => set({ game: makeInitialState(companyName, startSpecId) }),
 
       resetGame: () => set({ game: null }),
 

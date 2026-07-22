@@ -53,3 +53,18 @@ describe('generateMissions distance rules', () => {
     expect(slowFleetCapped).toBeLessThan(uncapped)
   })
 })
+
+const twoSeatSpec: AircraftSpec = { ...slowPistonSpec, id: 'c152', name: 'Cessna 152', seats: 2 }
+
+describe('generateMissions seat rules', () => {
+  it('never asks for more seats than the largest cabin in the fleet', () => {
+    const missions = generateMissions(SAMPLE_SIZE, 1, 50, [twoSeatSpec])
+    for (const m of missions) expect(m.seatsRequired).toBeLessThanOrEqual(2)
+  })
+
+  it('still allows larger seat counts when a bigger aircraft is owned', () => {
+    const bigSpec: AircraftSpec = { ...slowPistonSpec, id: 'c208', seats: 9 }
+    const missions = generateMissions(SAMPLE_SIZE, 1, 50, [twoSeatSpec, bigSpec])
+    expect(Math.max(...missions.map((m) => m.seatsRequired))).toBeGreaterThan(2)
+  })
+})

@@ -3,7 +3,7 @@ import { useGame } from '../game/store'
 import { AIRCRAFT_SPECS } from '../data/aircraft'
 import { BASES } from '../data/airports'
 import { useUI } from './ui'
-import { money } from '../game/format'
+import { money, FUEL_LABEL } from '../game/format'
 
 export function Market() {
   const game = useGame((s) => s.game)!
@@ -35,7 +35,7 @@ export function Market() {
                   <h3>{spec.name}</h3>
                   <div className="sub">{spec.category}</div>
                 </div>
-                <span className="pill">{spec.fuelType}</span>
+                <span className="pill">{FUEL_LABEL[spec.fuelType]}</span>
               </div>
               <div className="facts mission" style={{ marginTop: 12 }}>
                 <span><b>{spec.seats}</b> seats</span>
