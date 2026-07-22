@@ -1,4 +1,4 @@
-import type { GameState, Urgency } from './types'
+import type { GameState, Mission, Urgency } from './types'
 import { AIRPORTS, getAirport } from '../data/airports'
 
 export interface MapPoint {
@@ -62,4 +62,38 @@ export function deriveMapView(game: GameState): MapView {
       pilotLeg: { from: pilot, to: toPoint(m.fromIcao) },
     })),
   }
+}
+
+export interface MissionAtAirport {
+  id: string
+  title: string
+  fromIcao: string
+  toIcao: string
+  reward: number
+  role: 'from' | 'to'
+  status: 'available' | 'accepted'
+}
+
+/**
+ * Every mission (available or accepted) whose start or end is `icao`.
+ * UI-agnostic: the map dialog renders this list; the airport dot that was
+ * clicked is guaranteed to appear as at least one entry's from/to.
+ */
+export function missionsAtAirport(game: GameState, icao: string): MissionAtAirport[] {
+  const collect = (missions: Mission[], status: 'available' | 'accepted'): MissionAtAirport[] =>
+    missions
+      .filter((m) => m.fromIcao === icao || m.toIcao === icao)
+      .map((m) => ({
+        id: m.id,
+        title: m.title,
+        fromIcao: m.fromIcao,
+        toIcao: m.toIcao,
+        reward: m.reward,
+        role: m.toIcao === icao ? 'to' : 'from',
+        status,
+      }))
+  return [
+    ...collect(game.availableMissions, 'available'),
+    ...collect(game.acceptedMissions, 'accepted'),
+  ]
 }

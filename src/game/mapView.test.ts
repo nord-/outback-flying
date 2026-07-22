@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveMapView } from './mapView'
+import { deriveMapView, missionsAtAirport } from './mapView'
 import { AIRPORTS } from '../data/airports'
 import type { GameState, Mission } from './types'
 
@@ -73,5 +73,44 @@ describe('deriveMapView', () => {
       from: expect.objectContaining({ icao: 'YBHI' }), // pilotLocationIcao
       to: expect.objectContaining({ icao: 'YBMA' }), // mission.fromIcao
     })
+  })
+})
+
+describe('missionsAtAirport', () => {
+  it('returns available missions departing from the airport with role "from"', () => {
+    const r = missionsAtAirport(
+      game({ availableMissions: [mission({ id: 'a1', fromIcao: 'YBHI', toIcao: 'YBMA' })] }),
+      'YBHI'
+    )
+    expect(r).toEqual([
+      { id: 'a1', title: 'Test run', fromIcao: 'YBHI', toIcao: 'YBMA', reward: 5000, role: 'from', status: 'available' },
+    ])
+  })
+
+  it('returns missions arriving at the airport with role "to"', () => {
+    const r = missionsAtAirport(
+      game({ availableMissions: [mission({ id: 'a1', fromIcao: 'YBHI', toIcao: 'YBMA' })] }),
+      'YBMA'
+    )
+    expect(r).toHaveLength(1)
+    expect(r[0]).toMatchObject({ id: 'a1', role: 'to', status: 'available' })
+  })
+
+  it('includes both available and accepted missions touching the airport, available first', () => {
+    const r = missionsAtAirport(
+      game({
+        availableMissions: [mission({ id: 'a1', fromIcao: 'YBHI', toIcao: 'YBMA' })],
+        acceptedMissions: [mission({ id: 'b1', fromIcao: 'YCCY', toIcao: 'YBHI' })],
+      }),
+      'YBHI'
+    )
+    expect(r.map((m) => [m.id, m.status, m.role])).toEqual([
+      ['a1', 'available', 'from'],
+      ['b1', 'accepted', 'to'],
+    ])
+  })
+
+  it('returns an empty list for an airport with no missions', () => {
+    expect(missionsAtAirport(game(), 'YBAS')).toEqual([])
   })
 })

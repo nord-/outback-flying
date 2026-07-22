@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useGame } from './game/store'
 import { money } from './game/format'
-import { UIContext } from './components/ui'
+import { UIContext, NavContext, type Tab } from './components/ui'
 import { StartScreen } from './components/StartScreen'
 import { Dashboard } from './components/Dashboard'
 import { Missions } from './components/Missions'
 import { Fleet } from './components/Fleet'
 import { Market } from './components/Market'
 import { Ledger } from './components/Ledger'
-
-type Tab = 'dashboard' | 'missions' | 'fleet' | 'market' | 'ledger'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -24,6 +22,7 @@ export function App() {
   const advanceDay = useGame((s) => s.advanceDay)
   const resetGame = useGame((s) => s.resetGame)
   const [tab, setTab] = useState<Tab>('dashboard')
+  const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null)
 
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<number | undefined>(undefined)
@@ -38,6 +37,7 @@ export function App() {
 
   return (
     <UIContext.Provider value={{ notify }}>
+      <NavContext.Provider value={{ tab, setTab, selectedMissionId, setSelectedMissionId }}>
       <div className="app">
         <header className="topbar">
           <div className="brand">
@@ -108,6 +108,7 @@ export function App() {
 
         {toast && <div className="toast">{toast}</div>}
       </div>
+      </NavContext.Provider>
     </UIContext.Provider>
   )
 }
