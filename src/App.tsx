@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useGame } from './game/store'
+import { useHydrated } from './useHydrated'
 import { money } from './game/format'
 import { UIContext, NavContext, type Tab } from './components/ui'
 import { StartScreen } from './components/StartScreen'
@@ -32,6 +33,23 @@ export function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 3600)
   }, [])
   useEffect(() => () => window.clearTimeout(toastTimer.current), [])
+
+  const hydrated = useHydrated()
+
+  // Persistence is async (IndexedDB), so the store is empty until the saved
+  // game rehydrates. Wait for that before deciding whether to offer a new game,
+  // otherwise a returning player would see the StartScreen flash — and could
+  // start over on top of their existing save.
+  if (!hydrated) {
+    return (
+      <div className="app boot">
+        <div className="boot-inner">
+          <span className="logo">🛩️</span>
+          <p>Loading your operation…</p>
+        </div>
+      </div>
+    )
+  }
 
   if (!game) return <StartScreen />
 
