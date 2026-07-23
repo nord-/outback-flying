@@ -14,11 +14,13 @@
     "electron:dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env ELECTRON_DEV=1 electron .\"",
     "electron:build": "npm run build && electron-builder",
     "typecheck": "tsc --noEmit",
+    "simconnect:spike": "node electron/simconnect-spike.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
     "leaflet": "^1.9",
+    "node-simconnect": "^4.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-leaflet": "^4.2.1",
