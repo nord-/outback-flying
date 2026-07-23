@@ -16,8 +16,8 @@ distance, legs, fuel used, earnings, and a plotted track.
 Two rules from `CLAUDE.md` shape every decision here:
 
 1. **`src/game/` is UI-agnostic pure TypeScript, no side effects, no imports of React or
-   platform APIs.** SimConnect is the opposite of that: a stateful, Windows-only, native
-   I/O stream.
+   platform APIs.** SimConnect is the opposite of that: a stateful, side-effecting,
+   connection-bound I/O stream.
 2. **The whole `GameState` is persisted to `localStorage` under one key**
    (`outback-flying-save`) via the Zustand `persist` middleware.
 
@@ -26,7 +26,7 @@ of the design:
 
 | Layer | Home | Nature | Testable? |
 |-------|------|--------|-----------|
-| **Sim I/O** — connect, poll SimVars, stream samples | `electron/` (main process) | Impure, native, Windows-only | Barely — keep it thin |
+| **Sim I/O** — connect, poll SimVars, stream samples | `electron/` (main process) | Impure, socket-based; the *sim* runs on Windows, the client can run anywhere | Barely — keep it thin |
 | **Flight derivation** — samples + mission → `FlightLog` (leg detection, block/flight/duty, distance, fuel, airport/aircraft matching) | `src/game/flightlog.ts` (new) | **Pure** | **Yes — Vitest** |
 | **State + UI** — store action to commit a log, Logbook view, track on map | `src/game/store.ts`, `src/components/` | React / Zustand | Store already has tests |
 
@@ -41,9 +41,27 @@ SimConnect needs Node/native access. The renderer runs with `contextIsolation: t
 **main process** and reaches the React app through the `preload.js` bridge (which already
 anticipates this: *"Extend this bridge if native features … SimConnect … are added later"*).
 
-Consequence: **this is an Electron + Windows feature only.** `npm run dev` (plain web) and
-non-Windows builds must degrade gracefully — keep the manual `FlyModal` entry as the
-fallback path. Feature-detect via `window.outback`.
+**This does *not* make it a Windows-only feature.** A common early mistake (I made it in the
+first draft of this doc): conflating "the sim runs on Windows" with "the app must run on
+Windows". They're separate. The **simulator** (MSFS/FSX/P3D) runs on Windows — unavoidable,
+that's where the SimConnect server lives. But `node-simconnect` speaks the protocol over a
+**network socket (TCP)** — SimConnect explicitly supports remote connections (open a port in
+`SimConnect.xml`). So the Electron app can run on **Linux or macOS and connect over the
+LAN** to a Windows PC running the sim (or to `localhost` when everything is on one Windows
+box). Cross-platform companion apps talking to a sim over the network are a well-established
+pattern (EFBs, Little Navmap, etc.). This is why the `win`/`mac`/`linux` targets in
+`electron-builder` are not wasted — all three Electron builds can use the feature.
+
+The **only** build that genuinely can't do live SimConnect is the **pure web build**
+(`npm run dev`): a browser can't open raw TCP sockets and has no Node. That's a "web vs
+Electron" line, not a "Windows vs the rest" line. The web build (and any moment the bridge
+isn't present) keeps the manual `FlyModal` entry as its fallback — feature-detect via
+`window.outback`.
+
+The roadmap actually hedges this too: it says *"SimConnect / **log-file** integration"*.
+Parsing a flight-log file after the fact is fully platform-independent and needs no live
+connection at all — a viable portable complement, and a fallback if live SimConnect proves
+flaky on a given setup.
 
 ---
 
@@ -56,6 +74,10 @@ TCP/named pipe). Pure-JS matters a lot here:
 - **No native compile step** → `npm ci` on the Linux CI runner won't try to build a Windows
   addon and fall over.
 - Works with MSFS 2020 / 2024 and legacy FSX/P3D.
+- **Connects over TCP or named pipe.** The named pipe is local-only; the TCP path is what
+  lets a Linux/macOS client reach a Windows sim over the LAN (see §1). `open()` takes a
+  host/port, so "local sim" and "sim on another machine" are the same code path with
+  different connection parameters.
 
 **Critical build constraint:** `node-simconnect` must be imported **only from `electron/`**,
 never from anything Vite bundles (`src/`). If it leaks into the web bundle the browser build
@@ -219,35 +241,92 @@ export interface FlightLog {
   distanceNm: number
   fuelUsedL: number
   earnings: number
-  track: TrackPoint[]         // simplified — see §7
+  track: TrackPoint[]         // simplified (RDP); stored in its own IndexedDB record — see §7
+}
+
+// What actually lives in GameState — the heavy `track` stays out (see §7).
+export interface FlightLogSummary {
+  id: string
+  day: number
+  missionId?: string
+  aircraftId: string
+  startIcao: string
+  endIcao: string
+  blockMinutes: number
+  flightMinutes: number
+  dutyMinutes: number
+  distanceNm: number
+  fuelUsedL: number
+  earnings: number
 }
 ```
 
-Add `flightLogs: FlightLog[]` to `GameState` (or store separately — see §7) and **bump
-`SAVE_VERSION`** (currently 3 → 4) with a migration that defaults `flightLogs` to `[]`.
+Add `flightLogs: FlightLogSummary[]` to `GameState`; store each full `FlightLog` (with its
+`track`) as a separate IndexedDB record loaded on demand (§7). **Bump `SAVE_VERSION`**
+(currently 3 → 4) with a migration that defaults `flightLogs` to `[]`.
 
 ---
 
-## 7. The biggest technical risk: track size vs `localStorage`
+## 7. Storage — `localStorage` is a hard ceiling; we must migrate
 
-The whole `GameState` lives in one `localStorage` key. A 2-hour flight sampled at **1 Hz** is
-~7,200 points; multiple multi-leg flights kept forever will blow past the ~5–10 MB
-`localStorage` ceiling and bloat every `structuredClone` in the store.
+**Conclusion up front: `localStorage` is not good enough for this feature, and arguably not
+for a long-running game at all. We should move persistence to IndexedDB.** Track data is
+simply what makes the existing ceiling impossible to ignore.
 
-Mitigations (recommend combining the first two):
+### Why `localStorage` runs out
 
-1. **Simplify the track before saving** — Ramer–Douglas–Peucker (pure, testable). A cross-
-   country track compresses enormously with negligible visual loss. Store the simplified
-   polyline; that's all the map needs.
-2. **Adaptive sampling** — e.g. 1 sample / 2–4 s airborne, sparse on the ground, plus
-   "keyframe on turn > X°". Keeps raw size down before simplification even runs.
-3. **Move logs out of the main save** — in Electron, write full flight logs to a JSON file in
-   `userData` and keep only lightweight summaries (no `track`) in `GameState`; load the track
-   on demand when a flight is selected. Cleaner long-term, more plumbing. Could be a Phase-5+
-   follow-up once the in-save approach shows strain.
+The whole `GameState` is persisted to a single `localStorage` key (`outback-flying-save`) via
+the Zustand `persist` middleware. Three limits bite, not just one:
 
-Decision needed: simplified-in-save (simplest, ship first) vs file-backed logs (scales
-better). I lean **simplified-in-save for MVP**, with the data model kept file-backable later.
+1. **Size — ~5 MB per origin.** This holds in Electron too: the renderer is Chromium with the
+   same quota. A 2-hour flight sampled at 1 Hz ≈ 7,200 track points; a handful of multi-leg
+   flights blows past 5 MB.
+2. **Synchronous, string-only writes.** `persist` re-serialises the *entire* `GameState` to a
+   JSON string **on every mutation**. As the save grows, every write blocks the main thread.
+3. **`structuredClone` per mutation.** The store clones the whole state on every action
+   (`acceptMission`, `advanceDay`, …). Big track arrays in state make every trivial click
+   expensive.
+
+And the save grows **without bound** even before SimConnect: `ledger` is `unshift`-ed forever,
+and `flightLogs`/`track` only accelerate it. Simplifying the track (below) buys time but does
+not fix unbounded growth — the storage engine has to change.
+
+### Recommended direction
+
+1. **Switch the persistence backend to IndexedDB.** Async, quota in the hundreds of MB–GB
+   (disk-based, not a fixed 5 MB), non-blocking. Crucially it works in **both** the web build
+   and Electron, so we don't fork persistence across platforms. Zustand `persist` supports
+   async storage directly — we keep the `SAVE_VERSION` / `migrate` machinery and just swap the
+   engine (`createJSONStorage(() => idbStorage)`, e.g. via `idb-keyval`). Small, contained
+   change.
+2. **Split hot from cold; keep tracks out of `GameState`.** Core state (balance, fleet,
+   missions, stats, ledger) stays small and loads eagerly. **Full flight logs and their tracks
+   live as their own IndexedDB records**, keyed by log id, loaded lazily only when a flight is
+   selected on the map. `GameState` holds a lightweight `FlightLogSummary` (no `track`). Bonus:
+   this keeps the `structuredClone`-per-mutation pattern cheap, because the heavy arrays never
+   sit in the cloned state.
+3. **Still simplify the track before storing** — Ramer–Douglas–Peucker (pure, testable). A
+   cross-country track compresses enormously with negligible visual loss. Less I/O and memory
+   regardless of backend.
+4. **Adaptive sampling** — ~1 sample / 2–4 s airborne, sparse on the ground, keyframe on turns
+   > X°. Keeps raw size down before simplification even runs.
+5. **One-time migration** — on first launch of the new version, copy the existing
+   `localStorage` save into IndexedDB.
+
+### Considered and set aside (for now)
+
+- **Electron filesystem (`userData`) / SQLite.** Effectively unlimited and great for querying
+  logs/ledger, but it (a) doesn't help the web build and forks persistence, and (b) SQLite
+  (`better-sqlite3`) is a native dependency that must compile — friction for the pure-JS CI we
+  want to keep. IndexedDB gets ~90% of the benefit without those costs. A file-based
+  export/import could come later as an Electron-only nicety (the roadmap already lists "save
+  export/import").
+
+### Scope note
+
+The storage migration benefits the **whole game**, not just #9 — it's really a prerequisite
+that SimConnect happens to force. Worth tracking as **its own issue** so it can land (and be
+reviewed) independently of the SimConnect work, with #9 depending on it.
 
 ---
 
@@ -255,7 +334,7 @@ better). I lean **simplified-in-save for MVP**, with the data model kept file-ba
 
 Today: accept mission → `FlyModal` → type figures → `flyMission()` charges/pays/moves aircraft.
 
-Proposed with SimConnect (Electron/Windows):
+Proposed with SimConnect (any Electron build with the bridge present — see §1):
 
 1. Accept mission as now.
 2. A **"Fly live"** affordance (in `FlyModal` or a new panel) shows **connection status** and
@@ -270,8 +349,8 @@ Proposed with SimConnect (Electron/Windows):
    `Polyline`, and `mapView.ts` is the natural home for a pure "selected track → map points"
    selector.
 
-Manual entry stays as the fallback whenever the sim/bridge isn't present, so the web build and
-non-Windows users keep working.
+Manual entry stays as the fallback whenever the sim/bridge isn't present, so the pure web
+build (and any session with no sim reachable) keeps working.
 
 ### Store surface (sketch)
 
@@ -302,6 +381,10 @@ Each phase is independently shippable and testable; earliest phases retire the m
 - **Phase 1 — bridge + live readout:** main-process connection manager, `preload.js` exposes
   `window.outback.sim` (connect / status / sample stream over IPC). A tiny "Sim: connected"
   indicator. No recording yet.
+- **Phase 1.5 — storage migration (its own issue, prerequisite):** move persistence to
+  IndexedDB and move flight logs/tracks into their own records (§7). Best landed and reviewed
+  independently; #9's data model depends on it. Could run in parallel with Phases 0–1 since it
+  touches different code.
 - **Phase 2 — pure derivation + data model:** `src/game/flightlog.ts` (leg detection, block/
   flight/duty, distance via `geo.ts`, fuel, nearest-airport, aircraft match, RDP simplify) +
   `types.ts` additions + `SAVE_VERSION` bump + migration. **Heavily unit-tested against
@@ -311,8 +394,8 @@ Each phase is independently shippable and testable; earliest phases retire the m
 - **Phase 4 — commit + economy:** `commitFlightLog` store action; pre-fill/replace the manual
   report; earnings, wear, relocation via shared helpers.
 - **Phase 5 — Logbook UI + track on map:** list logs, select one → plot track polyline.
-- **Later (separate issues):** duty-time *gameplay* (limits/rest), file-backed log storage if
-  the in-save track proves too heavy, richer airport catalogue / facility lookups.
+- **Later (separate issues):** duty-time *gameplay* (limits/rest), file/SQLite export-import,
+  richer airport catalogue / facility lookups.
 
 ---
 
@@ -322,8 +405,9 @@ Each phase is independently shippable and testable; earliest phases retire the m
    end (shutdown at destination), or explicit "Start/Stop recording" buttons? Auto is smoother
    but riskier to get right; manual is predictable. (Leaning: auto-detect legs, with a manual
    "end flight" confirm.)
-2. **Track storage for MVP** — simplified-in-save (ship first) vs file-backed logs from the
-   start? (Leaning: simplified-in-save.)
+2. **Storage migration** — agree we move to IndexedDB (with tracks in separate records) and
+   split it into its own prerequisite issue? (Leaning: yes — §7. This replaces the earlier
+   "simplified-in-save vs file-backed" framing, which assumed we'd stay on `localStorage`.)
 3. **Aircraft forgiveness strictness** — block on family mismatch, or warn-only and let the
    flight count anyway? (Leaning: family match, warn on category fallback.)
 4. **Airports off-catalogue** — snap to nearest known ICAO, record raw coords as "unknown
@@ -331,7 +415,7 @@ Each phase is independently shippable and testable; earliest phases retire the m
 5. **Fuel units** — canonical litres everywhere, or show kg for turbine (JetA) types?
 6. **Sim scope** — MSFS 2024 only, or also keep 2020/FSX/P3D working (affects how much
    compatibility testing Phase 0 needs)?
-7. **Does live recording *replace* the honour system on Windows, or sit alongside it** as an
+7. **Does live recording *replace* the honour system on desktop, or sit alongside it** as an
    optional "verified" flight that maybe earns a small reputation/earnings bonus for using it?
 
 ---
@@ -342,8 +426,13 @@ Each phase is independently shippable and testable; earliest phases retire the m
   renderer via `preload.js`; never import it from `src/`.
 - Keep **all derivation logic pure in `src/game/flightlog.ts`** and test it against synthetic
   sample streams — the sim is only needed for the thin I/O layer and manual end-to-end checks.
-- **Simplify tracks (RDP) before saving** and bump `SAVE_VERSION`; revisit file-backed storage
-  if the in-save track gets heavy.
-- **Preserve the manual `FlyModal` path** as the graceful fallback for web/non-Windows.
+- **The app is cross-platform even though the sim is Windows** — `node-simconnect` connects
+  over TCP, so a Linux/macOS Electron build reaches a Windows sim over the LAN. Only the pure
+  web build can't do live SimConnect.
+- **Migrate persistence off `localStorage` to IndexedDB**, with flight logs/tracks in their
+  own records and only lightweight summaries in `GameState`; simplify tracks (RDP) and bump
+  `SAVE_VERSION`. Treat the storage move as its own prerequisite issue.
+- **Preserve the manual `FlyModal` path** as the graceful fallback for the web build / any
+  session with no sim reachable.
 - Ship in phases, **Phase 0 spike first** to retire the SimConnect-compatibility risk before
   building anything on top of it.
