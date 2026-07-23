@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
+import { persistentStorage } from './idbStorage'
 import type {
   GameState,
   LedgerCategory,
@@ -363,6 +364,8 @@ export const useGame = create<Store>()(
     {
       name: 'outback-flying-save',
       version: SAVE_VERSION,
+      // IndexedDB-backed (falls back to localStorage); see idbStorage.ts.
+      storage: createJSONStorage(() => persistentStorage),
       partialize: (s) => ({ game: s.game }),
       migrate: (persisted, version) => migratePersistedState(persisted, version),
     }

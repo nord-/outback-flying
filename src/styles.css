@@ -35,6 +35,9 @@ button { font-family: inherit; cursor: pointer; }
 
 /* ---------- Layout ---------- */
 .app { display: flex; flex-direction: column; height: 100%; }
+.app.boot { align-items: center; justify-content: center; }
+.app.boot .boot-inner { text-align: center; color: var(--muted); }
+.app.boot .logo { font-size: 44px; display: block; margin-bottom: 10px; }
 
 .topbar {
   display: flex; align-items: center; gap: 20px;
