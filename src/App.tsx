@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useGame } from './game/store'
 import { useHydrated } from './useHydrated'
 import { money } from './game/format'
+import { rankFor } from './game/progression'
+import { getRegion } from './data/regions'
 import { UIContext, NavContext, type Tab } from './components/ui'
 import { StartScreen } from './components/StartScreen'
 import { Dashboard } from './components/Dashboard'
@@ -20,6 +22,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function App() {
   const game = useGame((s) => s.game)
+  const operator = useGame((s) => s.operator)
   const advanceDay = useGame((s) => s.advanceDay)
   const resetGame = useGame((s) => s.resetGame)
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -53,6 +56,9 @@ export function App() {
 
   if (!game) return <StartScreen />
 
+  const region = getRegion(game.regionId)
+  const rank = rankFor(operator?.xp ?? 0)
+
   return (
     <UIContext.Provider value={{ notify }}>
       <NavContext.Provider value={{ tab, setTab, selectedMissionId, setSelectedMissionId }}>
@@ -62,11 +68,15 @@ export function App() {
             <span className="logo">🛩️</span>
             <div>
               <h1>Outback Flying</h1>
-              <div className="company">{game.companyName}</div>
+              <div className="company">{game.companyName} · {rank.title}</div>
             </div>
           </div>
 
           <div className="stats-strip">
+            <div className="stat">
+              <div className="label">Station</div>
+              <div className="value" style={{ fontSize: 14 }}>{region.flag} {region.name}</div>
+            </div>
             <div className="stat">
               <div className="label">Balance</div>
               <div className={`value ${game.balance >= 0 ? 'pos' : 'neg'}`}>{money(game.balance)}</div>

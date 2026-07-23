@@ -1,4 +1,5 @@
-import { AIRPORTS, BASES, getAirport } from '../data/airports'
+import { airportsInRegion, basesInRegion, getAirport } from '../data/airports'
+import { DEFAULT_REGION } from '../data/regions'
 import { distanceNm } from './geo'
 import { computeReward } from './economy'
 import type { AircraftSpec, Airport, Mission, MissionType, Urgency } from './types'
@@ -25,9 +26,9 @@ const TYPE_CONFIG: TypeConfig[] = [
     seats: [1, 2],
     weight: 3,
     narratives: [
-      'A stockman has been thrown from a horse on a remote station and needs urgent evacuation.',
-      'A road accident on an isolated highway has left a patient in a critical condition.',
-      'A child at a remote community has suspected appendicitis and must reach a hospital.',
+      'A serious workplace injury at a remote site needs urgent evacuation to hospital.',
+      'A road accident on an isolated route has left a patient in a critical condition.',
+      'A child in a remote community has suspected appendicitis and must reach a hospital.',
     ],
   },
   {
@@ -36,7 +37,7 @@ const TYPE_CONFIG: TypeConfig[] = [
     seats: [1, 3],
     weight: 2,
     narratives: [
-      'A doctor must be flown out to assess an unwell patient at a cattle station.',
+      'A doctor must be flown out to assess an unwell patient in an isolated settlement.',
       'An emergency physician is needed at a small community clinic overnight.',
     ],
   },
@@ -56,7 +57,7 @@ const TYPE_CONFIG: TypeConfig[] = [
     seats: [0, 2],
     weight: 2,
     narratives: [
-      'Medical supplies and vaccines must be delivered to an outback clinic.',
+      'Medical supplies and vaccines must be delivered to a remote clinic.',
       'Blood products are urgently required at a regional hospital.',
     ],
   },
@@ -132,8 +133,9 @@ interface DestinationCandidate {
   distance: number
 }
 
-function otherAirportsByDistance(from: Airport): DestinationCandidate[] {
-  return AIRPORTS.filter((a) => a.icao !== from.icao)
+function otherAirportsByDistance(from: Airport, regionId: string): DestinationCandidate[] {
+  return airportsInRegion(regionId)
+    .filter((a) => a.icao !== from.icao)
     .map((airport) => ({ airport, distance: distanceNm(from, airport) }))
     .sort((a, b) => a.distance - b.distance)
 }
@@ -145,21 +147,28 @@ function otherAirportsByDistance(from: Airport): DestinationCandidate[] {
  * nearest airport beyond MIN_DISTANCE_NM keeps the mission valid (distinct,
  * non-trivial distance) even if it runs longer than the target flight time.
  */
-function pickDestination(from: Airport, maxDist: number): DestinationCandidate {
-  const byDistance = otherAirportsByDistance(from)
+function pickDestination(from: Airport, maxDist: number, regionId: string): DestinationCandidate {
+  const byDistance = otherAirportsByDistance(from, regionId)
   const inWindow = byDistance.filter((c) => c.distance >= MIN_DISTANCE_NM && c.distance <= maxDist)
   if (inWindow.length > 0) return pick(inWindow)
   return byDistance.find((c) => c.distance >= MIN_DISTANCE_NM) ?? byDistance[0]
 }
 
 /** Generate a single mission valid on the given day, scaled by reputation and current fleet. */
-export function generateMission(day: number, reputation: number, fleetSpecs: AircraftSpec[] = []): Mission {
+export function generateMission(
+  day: number,
+  reputation: number,
+  fleetSpecs: AircraftSpec[] = [],
+  regionId: string = DEFAULT_REGION
+): Mission {
   const cfg = weightedType()
   const maxDist = maxDistanceForFleet(fleetSpecs)
 
-  // Origin favours bases; destination is any other airport within a sensible range.
-  const from = Math.random() < 0.7 ? pick(BASES) : pick(AIRPORTS)
-  const { airport: to, distance: dist } = pickDestination(from, maxDist)
+  // Origin favours bases; destination is any other airport in-region within range.
+  const airports = airportsInRegion(regionId)
+  const bases = basesInRegion(regionId)
+  const from = Math.random() < 0.7 && bases.length ? pick(bases) : pick(airports)
+  const { airport: to, distance: dist } = pickDestination(from, maxDist, regionId)
 
   const maxSeats = maxSeatsForFleet(fleetSpecs)
   const hi = Math.min(cfg.seats[1], maxSeats)
@@ -191,8 +200,14 @@ export function generateMission(day: number, reputation: number, fleetSpecs: Air
 }
 
 /** Generate a batch of missions for the mission board. */
-export function generateMissions(count: number, day: number, reputation: number, fleetSpecs: AircraftSpec[] = []): Mission[] {
-  return Array.from({ length: count }, () => generateMission(day, reputation, fleetSpecs))
+export function generateMissions(
+  count: number,
+  day: number,
+  reputation: number,
+  fleetSpecs: AircraftSpec[] = [],
+  regionId: string = DEFAULT_REGION
+): Mission[] {
+  return Array.from({ length: count }, () => generateMission(day, reputation, fleetSpecs, regionId))
 }
 
 export const missionTypeLabel = (t: MissionType): string =>

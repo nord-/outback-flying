@@ -2,12 +2,17 @@ import { useGame } from '../game/store'
 import { getSpec } from '../data/aircraft'
 import { getAirport } from '../data/airports'
 import { money, price, FUEL_LABEL } from '../game/format'
+import { rankFor, rankProgress } from '../game/progression'
 import { OperationsMap } from './OperationsMap'
 
 export function Dashboard() {
   const game = useGame((s) => s.game)!
+  const operator = useGame((s) => s.operator)
   const dailyBurn = game.fleet.reduce((s, a) => s + getSpec(a.specId).dailyFixedCost, 0)
   const emergencies = game.availableMissions.filter((m) => m.urgency === 'EMERGENCY').length
+  const xp = operator?.xp ?? 0
+  const rank = rankFor(xp)
+  const progress = rankProgress(xp)
 
   return (
     <div>
@@ -34,6 +39,21 @@ export function Dashboard() {
         <div className="card kpi"><span className="k-label">Missions completed</span><span className="k-value" style={{ color: 'var(--green)' }}>{game.stats.missionsCompleted}</span></div>
         <div className="card kpi"><span className="k-label">Missions failed</span><span className="k-value" style={{ color: game.stats.missionsFailed ? 'var(--red)' : 'var(--text)' }}>{game.stats.missionsFailed}</span></div>
         <div className="card kpi"><span className="k-label">Hours flown</span><span className="k-value">{game.stats.hoursFlown.toFixed(1)}</span></div>
+      </div>
+
+      <div className="card mb">
+        <div className="spread">
+          <div>
+            <span className="k-label" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.7, color: 'var(--faint)' }}>Pilot rank</span>
+            <div className="k-value" style={{ fontSize: 22, fontWeight: 700 }}>{rank.title}</div>
+          </div>
+          <div className="tiny muted" style={{ textAlign: 'right' }}>
+            {xp.toLocaleString()} XP
+            {progress.next ? <><br />{progress.toNext.toLocaleString()} XP to {progress.next.title}</> : <><br />Top rank reached</>}
+          </div>
+        </div>
+        <div className="meter rep mt"><span style={{ width: `${Math.round(progress.pct * 100)}%` }} /></div>
+        <p className="tiny muted mt">Experience carries with you across region transfers.</p>
       </div>
 
       <div className="grid cols-2">

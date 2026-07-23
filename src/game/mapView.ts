@@ -1,5 +1,5 @@
 import type { GameState, Mission, Urgency } from './types'
-import { AIRPORTS, getAirport } from '../data/airports'
+import { airportsInRegion, getAirport } from '../data/airports'
 
 export interface MapPoint {
   icao: string
@@ -39,7 +39,7 @@ function toPoint(icao: string): MapPoint {
 export function deriveMapView(game: GameState): MapView {
   const pilot = toPoint(game.pilotLocationIcao)
   return {
-    airports: AIRPORTS.map((a) => ({ icao: a.icao, name: a.name, lat: a.lat, lon: a.lon })),
+    airports: airportsInRegion(game.regionId).map((a) => ({ icao: a.icao, name: a.name, lat: a.lat, lon: a.lon })),
     homeBase: toPoint(game.homeBaseIcao),
     pilot,
     aircraft: game.fleet.map((a) => ({
@@ -62,6 +62,25 @@ export function deriveMapView(game: GameState): MapView {
       pilotLeg: { from: pilot, to: toPoint(m.fromIcao) },
     })),
   }
+}
+
+export type LatLngBoundsTuple = [[number, number], [number, number]]
+
+/**
+ * Bounding box ([[swLat, swLon], [neLat, neLon]]) around a region's airports,
+ * used as the map's initial view and its empty-state fallback. Padded slightly
+ * so edge airports aren't flush against the frame.
+ */
+export function regionBounds(regionId: string): LatLngBoundsTuple {
+  const airports = airportsInRegion(regionId)
+  if (airports.length === 0) return [[-44, 112], [-10, 154]] // fall back to Australia
+  const lats = airports.map((a) => a.lat)
+  const lons = airports.map((a) => a.lon)
+  const pad = 1
+  return [
+    [Math.min(...lats) - pad, Math.min(...lons) - pad],
+    [Math.max(...lats) + pad, Math.max(...lons) + pad],
+  ]
 }
 
 export interface MissionAtAirport {

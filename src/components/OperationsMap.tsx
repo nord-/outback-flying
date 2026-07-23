@@ -14,7 +14,7 @@ import * as L from 'leaflet'
 import type { LatLngExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useGame } from '../game/store'
-import { deriveMapView, type MapPoint } from '../game/mapView'
+import { deriveMapView, regionBounds, type MapPoint } from '../game/mapView'
 import type { Urgency } from '../game/types'
 import { useNav } from './ui'
 import { MissionPickerDialog } from './MissionPickerDialog'
@@ -24,9 +24,6 @@ const URGENCY_COLOR: Record<Urgency, string> = {
   PRIORITY: '#e8b23c',
   ROUTINE: '#5aa9e0',
 }
-
-// Continental Australia, used as the initial/fallback view.
-const AUSTRALIA_BOUNDS = new L.LatLngBounds([-44, 112], [-10, 154])
 
 const homeIcon = L.divIcon({ className: 'map-pin', html: '🏠', iconSize: [24, 24], iconAnchor: [12, 12] })
 const pilotIcon = L.divIcon({ className: 'map-pin', html: '🧑‍✈️', iconSize: [26, 26], iconAnchor: [13, 13] })
@@ -60,7 +57,7 @@ function MissionEndpointMarkers({
   )
 }
 
-function FitBounds({ points }: { points: MapPoint[] }) {
+function FitBounds({ points, fallback }: { points: MapPoint[]; fallback: L.LatLngBoundsExpression }) {
   const map = useMap()
   // Refit only when the SET of plotted airports changes — not on every render.
   // `focusPoints` is a fresh array each render, so depending on it directly would
@@ -68,15 +65,18 @@ function FitBounds({ points }: { points: MapPoint[] }) {
   // an Advance-day). Keying on the joined ICAO list makes the dependency stable.
   const boundsKey = Array.from(new Set(points.map((p) => p.icao))).sort().join(',')
   useEffect(() => {
+    // `animate: false` — an instant fit. Animated fits queue a zoom transition
+    // whose end-callback can fire after the pane is gone (rapid board refreshes,
+    // unmount), throwing inside Leaflet; a data map also reads better snapping.
     if (points.length === 0) {
-      map.fitBounds(AUSTRALIA_BOUNDS, { maxZoom: 6 })
+      map.fitBounds(fallback, { maxZoom: 6, animate: false })
       return
     }
     const bounds = new L.LatLngBounds(points.map((p) => [p.lat, p.lon] as [number, number]))
     // Small pixel padding (not a ratio pad, which over-zooms out) and a maxZoom
     // cap so a tight cluster — or everything sharing one field, e.g. no missions
     // yet — still lands on a sensible regional view instead of street level.
-    map.fitBounds(bounds, { padding: [16, 16], maxZoom: 6 })
+    map.fitBounds(bounds, { padding: [16, 16], maxZoom: 6, animate: false })
   }, [map, boundsKey])
   return null
 }
@@ -86,6 +86,9 @@ export function OperationsMap() {
   const view = deriveMapView(game)
   const { setTab, setSelectedMissionId } = useNav()
   const [pickerIcao, setPickerIcao] = useState<string | null>(null)
+
+  // Initial view / empty-state fallback: the current region's bounding box.
+  const bounds = new L.LatLngBounds(regionBounds(game.regionId))
 
   const focusPoints: MapPoint[] = [
     view.homeBase,
@@ -99,13 +102,13 @@ export function OperationsMap() {
     <div className="card">
       <h3>Operations map</h3>
       <div className="map-wrap">
-        <MapContainer bounds={AUSTRALIA_BOUNDS} scrollWheelZoom className="leaflet-root">
+        <MapContainer bounds={bounds} scrollWheelZoom className="leaflet-root">
           <TileLayer
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
             subdomains="abcd"
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
           />
-          <FitBounds points={focusPoints} />
+          <FitBounds points={focusPoints} fallback={bounds} />
 
           {view.airports.map((a) => (
             <CircleMarker

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { deriveMapView, missionsAtAirport } from './mapView'
-import { AIRPORTS } from '../data/airports'
+import { airportsInRegion } from '../data/airports'
 import type { GameState, Mission } from './types'
 
 const mission = (over: Partial<Mission>): Mission => ({
@@ -25,6 +25,7 @@ function game(over: Partial<GameState> = {}): GameState {
   return {
     version: 2,
     companyName: 'Test Air',
+    regionId: 'outback',
     homeBaseIcao: 'YBAS',
     pilotLocationIcao: 'YBHI',
     balance: 1000,
@@ -48,8 +49,8 @@ describe('deriveMapView', () => {
     expect(v.pilot.icao).toBe('YBHI')
   })
 
-  it('includes every airport as a background point', () => {
-    expect(deriveMapView(game()).airports).toHaveLength(AIRPORTS.length)
+  it('includes every in-region airport as a background point', () => {
+    expect(deriveMapView(game()).airports).toHaveLength(airportsInRegion('outback').length)
   })
 
   it('maps each owned aircraft to a point', () => {

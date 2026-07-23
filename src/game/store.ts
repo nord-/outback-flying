@@ -5,17 +5,20 @@ import type {
   GameState,
   LedgerCategory,
   Mission,
+  OperatorProfile,
   OwnedAircraft,
 } from './types'
 import { getSpec, STARTER_OPTIONS, DEFAULT_STARTER } from '../data/aircraft'
+import { getRegion, DEFAULT_REGION } from '../data/regions'
 import { generateMissions } from './missions'
+import { xpForMission } from './progression'
 import {
   conditionLoss,
   fuelCost,
   maintenanceCost,
 } from './economy'
 
-const SAVE_VERSION = 3
+const SAVE_VERSION = 4
 const MISSION_BOARD_TARGET = 7
 
 let idSeq = 0
@@ -33,10 +36,13 @@ function clamp(n: number, lo: number, hi: number): number {
 
 export interface PersistedSave {
   game: GameState | null
+  operator?: OperatorProfile | null
 }
 
-/** Migrate an older persisted save (pre-v3) forward to the current SAVE_VERSION
- *  (adds v2 base/pilot fields; remaps v3 removed aircraft spec ids). */
+/** Migrate an older persisted save forward to the current SAVE_VERSION:
+ *  - v2: add home base / pilot location fields
+ *  - v3: remap removed aircraft spec ids
+ *  - v4: add the region id and synthesise an operator profile */
 export function migratePersistedState(persisted: unknown, version: number): PersistedSave {
   const state = persisted as PersistedSave
   const g = state?.game
@@ -52,11 +58,20 @@ export function migratePersistedState(persisted: unknown, version: number): Pers
     if (Object.prototype.hasOwnProperty.call(SPEC_REMAP, ac.specId)) ac.specId = SPEC_REMAP[ac.specId]
   }
 
+  // Region support (v4): pre-region saves are all Australian outback. Also
+  // synthesise an operator profile so the persistent career exists.
+  if (!g.regionId) g.regionId = DEFAULT_REGION
+  if (!state.operator) {
+    state.operator = { name: g.companyName, xp: 0, startRegionId: g.regionId }
+  }
+
   g.version = SAVE_VERSION
   return state
 }
 
-function makeInitialState(companyName: string, startSpecId: string): GameState {
+function makeInitialState(companyName: string, startSpecId: string, regionId: string): GameState {
+  const region = getRegion(regionId)
+  const home = region.homeBaseIcao
   const option =
     STARTER_OPTIONS.find((o) => o.specId === startSpecId) ??
     STARTER_OPTIONS.find((o) => o.specId === DEFAULT_STARTER) ??
@@ -67,19 +82,20 @@ function makeInitialState(companyName: string, startSpecId: string): GameState {
     registration: randomRegistration(),
     hoursFlown: 0,
     condition: 100,
-    locationIcao: 'YBAS',
+    locationIcao: home,
   }
   const g: GameState = {
     version: SAVE_VERSION,
     companyName: companyName.trim() || 'Outback Air Rescue',
-    homeBaseIcao: 'YBAS',
-    pilotLocationIcao: 'YBAS',
+    regionId,
+    homeBaseIcao: home,
+    pilotLocationIcao: home,
     balance: 0,
     reputation: 50,
     day: 1,
-    fuel: { AVGAS: 2.9, JETA: 2.4 },
+    fuel: { ...region.startingFuel },
     fleet: [starter],
-    availableMissions: generateMissions(MISSION_BOARD_TARGET, 1, 50, [getSpec(starter.specId)]),
+    availableMissions: generateMissions(MISSION_BOARD_TARGET, 1, 50, [getSpec(starter.specId)], regionId),
     acceptedMissions: [],
     ledger: [],
     stats: { missionsCompleted: 0, missionsFailed: 0, hoursFlown: 0, totalEarned: 0 },
@@ -91,6 +107,10 @@ function makeInitialState(companyName: string, startSpecId: string): GameState {
     option.startingBalance
   )
   return g
+}
+
+function makeOperator(name: string, regionId: string): OperatorProfile {
+  return { name: name.trim() || 'Outback Air Rescue', xp: 0, startRegionId: regionId }
 }
 
 export interface FlyReport {
@@ -113,8 +133,9 @@ export interface FlyOutcome {
 
 interface Store {
   game: GameState | null
+  operator: OperatorProfile | null
   // lifecycle
-  newGame: (companyName: string, startSpecId: string) => void
+  newGame: (companyName: string, startSpecId: string, regionId?: string) => void
   resetGame: () => void
   // missions
   acceptMission: (missionId: string) => void
@@ -153,10 +174,15 @@ export const useGame = create<Store>()(
   persist(
     (set, get) => ({
       game: null,
+      operator: null,
 
-      newGame: (companyName, startSpecId) => set({ game: makeInitialState(companyName, startSpecId) }),
+      newGame: (companyName, startSpecId, regionId = DEFAULT_REGION) =>
+        set({
+          game: makeInitialState(companyName, startSpecId, regionId),
+          operator: makeOperator(companyName, regionId),
+        }),
 
-      resetGame: () => set({ game: null }),
+      resetGame: () => set({ game: null, operator: null }),
 
       acceptMission: (missionId) =>
         set((s) => {
@@ -228,10 +254,14 @@ export const useGame = create<Store>()(
         g.stats.missionsCompleted += 1
         g.stats.hoursFlown = +(g.stats.hoursFlown + report.blockMinutes / 60).toFixed(2)
 
+        // Career experience accrues to the operator (persists across regions).
+        const xp = xpForMission(mission)
+        const operator = s.operator ? { ...s.operator, xp: s.operator.xp + xp } : s.operator
+
         // Remove from accepted.
         g.acceptedMissions = g.acceptedMissions.filter((m) => m.id !== mission.id)
 
-        set({ game: g })
+        set({ game: g, operator })
         const net = mission.reward - fuel - maint - (onTime ? 0 : mission.penalty)
         return {
           ok: true,
@@ -241,8 +271,8 @@ export const useGame = create<Store>()(
           maintenance: maint,
           net,
           message: onTime
-            ? `Mission complete. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}.`
-            : `Completed late — reputation and a penalty applied. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}.`,
+            ? `Mission complete. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
+            : `Completed late — reputation and a penalty applied. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`,
         }
       },
 
@@ -355,7 +385,7 @@ export const useGame = create<Store>()(
           const need = MISSION_BOARD_TARGET - g.availableMissions.length
           if (need > 0) {
             const fleetSpecs = g.fleet.map((a) => getSpec(a.specId))
-            g.availableMissions.push(...generateMissions(need, g.day, g.reputation, fleetSpecs))
+            g.availableMissions.push(...generateMissions(need, g.day, g.reputation, fleetSpecs, g.regionId))
           }
 
           return { game: g }
@@ -366,7 +396,7 @@ export const useGame = create<Store>()(
       version: SAVE_VERSION,
       // IndexedDB-backed (falls back to localStorage); see idbStorage.ts.
       storage: createJSONStorage(() => persistentStorage),
-      partialize: (s) => ({ game: s.game }),
+      partialize: (s) => ({ game: s.game, operator: s.operator }),
       migrate: (persisted, version) => migratePersistedState(persisted, version),
     }
   )
