@@ -3,6 +3,7 @@ import { useGame } from './game/store'
 import { money } from './game/format'
 import { UIContext, NavContext, type Tab } from './components/ui'
 import { StartScreen } from './components/StartScreen'
+import { SimStatus } from './components/SimStatus'
 import { Dashboard } from './components/Dashboard'
 import { Missions } from './components/Missions'
 import { Fleet } from './components/Fleet'
@@ -79,6 +80,7 @@ export function App() {
             >
               New game
             </button>
+            <SimStatus />
           </div>
         </header>
 
