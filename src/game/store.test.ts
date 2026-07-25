@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { migratePersistedState, useGame } from './store'
+import { migratePersistedState, useGame, getHydrationError } from './store'
 import { getSpec } from '../data/aircraft'
 import type { GameState, OwnedAircraft } from './types'
 
@@ -118,5 +118,33 @@ describe('migratePersistedState catalogue remap', () => {
     save.game!.fleet[0].specId = 'pa31'
     const out = migratePersistedState(save, 2)
     expect(out.game?.fleet[0].specId).toBe('baron')
+  })
+})
+
+// End-to-end through the persist middleware and persistentStorage (in jsdom
+// there is no IndexedDB, so the adapter's localStorage path carries the save —
+// the IndexedDB path is covered in idbStorage.test.ts).
+describe('rehydration through persistentStorage', () => {
+  const SAVE_KEY = 'outback-flying-save'
+  afterEach(() => {
+    localStorage.removeItem(SAVE_KEY)
+    useGame.getState().resetGame()
+  })
+
+  it('rehydrates and migrates a stored save', async () => {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ state: legacySave('YBHI'), version: 1 }))
+    await useGame.persist.rehydrate()
+    const g = useGame.getState().game!
+    expect(g.companyName).toBe('Test Air')
+    expect(g.pilotLocationIcao).toBe('YBHI') // migrate() ran over the stored value
+    expect(g.fleet[0].specId).toBe('bonanza') // c210 remapped by the v3 migration
+  })
+
+  it('signals a hydration error for a corrupt save instead of hanging', async () => {
+    localStorage.setItem(SAVE_KEY, '{this is not json')
+    await Promise.resolve(useGame.persist.rehydrate()).catch(() => {})
+    // onFinishHydration never fires on failure; the error signal is what keeps
+    // the boot screen from waiting forever (see useHydrated + App.tsx).
+    expect(getHydrationError()).toBeTruthy()
   })
 })

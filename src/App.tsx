@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useGame } from './game/store'
+import { useGame, eraseSave } from './game/store'
+import { useHydrated } from './useHydrated'
 import { money } from './game/format'
 import { UIContext, NavContext, type Tab } from './components/ui'
 import { StartScreen } from './components/StartScreen'
@@ -32,6 +33,55 @@ export function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 3600)
   }, [])
   useEffect(() => () => window.clearTimeout(toastTimer.current), [])
+
+  const { hydrated, error: bootError } = useHydrated()
+
+  // Rehydration failed (corrupt save, migration throw). onFinishHydration never
+  // fires in that case, so without this branch the boot screen below would spin
+  // forever. Offer recovery instead of silently dropping to StartScreen, where
+  // starting a new game would overwrite the (possibly repairable) save.
+  if (bootError) {
+    return (
+      <div className="app boot">
+        <div className="boot-inner">
+          <span className="logo" aria-hidden="true">🛩️</span>
+          <p>Your saved game could not be loaded.</p>
+          <p className="tiny muted">
+            {bootError instanceof Error ? bootError.message : String(bootError)}
+          </p>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 14 }}>
+            <button className="btn" onClick={() => location.reload()}>
+              Try again
+            </button>
+            <button
+              className="btn danger"
+              onClick={() => {
+                if (!confirm('Erase the unreadable save and start over? This cannot be undone.')) return
+                void eraseSave().then(() => location.reload())
+              }}
+            >
+              Start over (erase save)
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Persistence is async (IndexedDB), so the store is empty until the saved
+  // game rehydrates. Wait for that before deciding whether to offer a new game,
+  // otherwise a returning player would see the StartScreen flash — and could
+  // start over on top of their existing save.
+  if (!hydrated) {
+    return (
+      <div className="app boot">
+        <div className="boot-inner">
+          <span className="logo" aria-hidden="true">🛩️</span>
+          <p>Loading your operation…</p>
+        </div>
+      </div>
+    )
+  }
 
   if (!game) return <StartScreen />
 

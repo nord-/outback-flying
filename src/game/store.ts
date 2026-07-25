@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
+import { persistentStorage } from './idbStorage'
 import type {
   GameState,
   LedgerCategory,
@@ -15,7 +16,29 @@ import {
 } from './economy'
 
 const SAVE_VERSION = 3
+const SAVE_KEY = 'outback-flying-save'
 const MISSION_BOARD_TARGET = 7
+
+// Hydration failure signal. persist's onFinishHydration never fires when
+// rehydration throws (corrupt stored JSON, a hostile persisted shape), so the
+// UI needs a separate signal — otherwise it would wait on the boot screen
+// forever. Pure TS on purpose: React subscribes via useHydrated().
+let hydrationError: unknown = null
+const hydrationErrorListeners = new Set<(err: unknown) => void>()
+
+export function getHydrationError(): unknown {
+  return hydrationError
+}
+
+export function onHydrationError(cb: (err: unknown) => void): () => void {
+  hydrationErrorListeners.add(cb)
+  return () => hydrationErrorListeners.delete(cb)
+}
+
+/** Erase the persisted save entirely (boot-error recovery). */
+export async function eraseSave(): Promise<void> {
+  await persistentStorage.removeItem(SAVE_KEY)
+}
 
 let idSeq = 0
 const uid = (p: string) => `${p}_${Date.now().toString(36)}_${(idSeq++).toString(36)}`
@@ -361,10 +384,18 @@ export const useGame = create<Store>()(
         }),
     }),
     {
-      name: 'outback-flying-save',
+      name: SAVE_KEY,
       version: SAVE_VERSION,
+      // IndexedDB-backed (falls back to localStorage); see idbStorage.ts.
+      storage: createJSONStorage(() => persistentStorage),
       partialize: (s) => ({ game: s.game }),
       migrate: (persisted, version) => migratePersistedState(persisted, version),
+      onRehydrateStorage: () => (_state, error) => {
+        if (error) {
+          hydrationError = error
+          hydrationErrorListeners.forEach((cb) => cb(error))
+        }
+      },
     }
   )
 )
