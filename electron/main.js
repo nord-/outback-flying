@@ -1,9 +1,30 @@
-import { app, BrowserWindow, Menu } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { createSimBridge } from './simconnect.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = process.env.ELECTRON_DEV === '1'
+
+let mainWindow = null
+
+// Push a message to the renderer if the window is still alive.
+function sendToRenderer(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload)
+  }
+}
+
+// One SimConnect bridge for the app's lifetime; it streams to whichever window
+// is current. Samples and status changes are forwarded to the renderer.
+const simBridge = createSimBridge({
+  onSample: (sample) => sendToRenderer('sim:sample', sample),
+  onStatus: (event) => sendToRenderer('sim:status', event),
+})
+
+ipcMain.handle('sim:connect', (_event, options) => simBridge.connect(options))
+ipcMain.handle('sim:disconnect', () => simBridge.disconnect())
+ipcMain.handle('sim:status', () => simBridge.getStatus())
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -18,6 +39,10 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  })
+  mainWindow = win
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
   })
 
   if (isDev) {
@@ -45,6 +70,8 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+app.on('before-quit', () => simBridge.disconnect())
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
