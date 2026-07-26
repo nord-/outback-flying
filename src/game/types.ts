@@ -85,6 +85,14 @@ export interface LedgerEntry {
   balanceAfter: number
 }
 
+export interface DutyEntry {
+  id: string
+  day: number // game day the duty was incurred
+  minutes: number // duty minutes (computeDutyMinutes result)
+  kind: 'MISSION' | 'FERRY' | 'FREE'
+  missionId?: string
+}
+
 export interface FuelPrices {
   AVGAS: number // $ per litre
   JETA: number
@@ -167,6 +175,7 @@ export interface GameState {
   acceptedMissions: Mission[]
   ledger: LedgerEntry[]
   flightLogs: FlightLogSummary[]
+  dutyLog: DutyEntry[]
   stats: {
     missionsCompleted: number
     missionsFailed: number

@@ -37,8 +37,14 @@ Centurion**. Reputation unlocks better-paying work.
   next job departs elsewhere, you fly a (non-paying) ferry leg first.
 - **Honesty system.** The game trusts your reported figures — it pre-fills
   sensible suggestions based on distance and the aircraft's performance.
-- **Everything is saved locally** (browser `localStorage`), so you can close and
-  come back to your operation.
+- **Pilot duty-time limits.** Duty (block time + 30 min per stop) is tracked
+  across a rolling 1/7/14/28-day window against real aviation-style caps (10 h /
+  60 h / 110 h / 190 h). The dashboard shows your running totals, accepting a
+  mission that would breach a limit prompts a warning, and flying over one
+  anyway withholds part or all of the reward.
+- **Everything is saved locally** (IndexedDB, falling back to browser
+  `localStorage` if unavailable), so you can close and come back to your
+  operation.
 
 ## Running it
 
@@ -90,6 +96,9 @@ components only render state and dispatch actions through the Zustand store
 - **Operator profile with experience & rank** — a persistent career (name, XP,
   rank) that sits above the per-region station, so it can carry across a future
   region transfer. Flying missions earns XP and advances your pilot rank.
+- **Pilot duty-time limits** — aviation-style caps on flying hours over 1/7/14/28
+  days, with dashboard tracking, an accept-time warning before breaching a
+  limit, and a reward penalty if you fly over anyway.
 
 ### High priority
 

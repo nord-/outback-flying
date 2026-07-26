@@ -4,3 +4,6 @@ release/
 *.log
 .DS_Store
 .vite/
+
+# Local Claude Code tooling (worktrees, agents, settings) — never commit
+.claude/

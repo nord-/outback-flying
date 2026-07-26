@@ -11,6 +11,8 @@ import {
   suggestedFuelLitres,
 } from '../game/economy'
 import { money, price, FUEL_LABEL } from '../game/format'
+import { computeDutyMinutes } from '../game/flightlog'
+import { wouldBeOver, isOverAnyLimit } from '../game/duty'
 import type { OwnedAircraft } from '../game/types'
 
 export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft; onClose: () => void }) {
@@ -48,6 +50,9 @@ export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft
 
   const fuelPrice = game.fuel[spec.fuelType]
   const cost = fuelCost(Number(fuel) || 0, fuelPrice) + maintenanceCost(Number(block) || 0, spec.maintPerHour)
+  const ferryDutyEst = computeDutyMinutes(Number(block) || 0, 1)
+  const dutyAlreadyOver = isOverAnyLimit(game.dutyLog, game.day)
+  const dutyWouldExceed = wouldBeOver(game.dutyLog, game.day, ferryDutyEst)
 
   const submit = () => {
     const res = reposition(aircraft.id, toIcao, Math.round(Number(block)), Math.round(Number(fuel)))
@@ -93,6 +98,13 @@ export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft
           </div>
           <div className="summary-box">
             <div className="line total"><span>Estimated cost</span><span className="amount neg">-{money(cost)}</span></div>
+            {(dutyAlreadyOver || dutyWouldExceed) && (
+              <div className="tiny" style={{ color: 'var(--red)', marginTop: 6 }}>
+                ⚠ {dutyAlreadyOver
+                  ? 'You are already over a duty-time limit — this ferry adds to it.'
+                  : 'This ferry will put you over a duty-time limit.'}
+              </div>
+            )}
           </div>
           {err && <div className="notice err">{err}</div>}
         </div>

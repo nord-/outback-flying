@@ -6,6 +6,7 @@ import { estimateProfit, URGENCY_MULT } from '../game/economy'
 import { missionTypeLabel } from '../game/missions'
 import { money, URGENCY_LABEL } from '../game/format'
 import { bearingDeg, compass } from '../game/geo'
+import { estimateDutyMinutes, wouldBeOver, isOverAnyLimit } from '../game/duty'
 import type { Mission } from '../game/types'
 import { FlyModal } from './FlyModal'
 import { useNav } from './ui'
@@ -48,6 +49,16 @@ function MissionCard({
     ? Math.max(...capable.map((s) => estimateProfit(m, s, game.fuel[s.fuelType])))
     : null
 
+  // Best-case (fastest capable owned aircraft) duty estimate. Warn only if even
+  // the best case would breach a limit — the player cannot avoid it.
+  const bestDutyEst = capable.length
+    ? Math.min(...capable.map((s) => estimateDutyMinutes(m.distanceNm, s.cruiseKts)))
+    : null
+  const dutyAlreadyOver = isOverAnyLimit(game.dutyLog, game.day)
+  const acceptWouldExceed =
+    dutyAlreadyOver || (bestDutyEst !== null && wouldBeOver(game.dutyLog, game.day, bestDutyEst))
+  const [confirmingAccept, setConfirmingAccept] = useState(false)
+
   return (
     <div className={`card mission${highlighted ? ' highlight' : ''}`} ref={cardRef}>
       <div className="head">
@@ -74,8 +85,23 @@ function MissionCard({
             <button className="btn primary sm" onClick={() => onFly(m)}>Fly this leg</button>
             <button className="btn danger sm" onClick={() => abandon(m.id)}>Abandon</button>
           </>
+        ) : confirmingAccept ? (
+          <div className="notice warn" style={{ width: '100%' }}>
+            ⚠ {dutyAlreadyOver
+              ? 'You are already over a duty-time limit — flying this earns no reward.'
+              : 'This will put you over a duty-time limit — 50% of the reward will be withheld.'}
+            <div className="actions mt">
+              <button className="btn danger sm" onClick={() => { accept(m.id); setConfirmingAccept(false) }}>Accept anyway</button>
+              <button className="btn ghost sm" onClick={() => setConfirmingAccept(false)}>Cancel</button>
+            </div>
+          </div>
         ) : (
-          <button className="btn primary sm" onClick={() => accept(m.id)}>Accept</button>
+          <button
+            className="btn primary sm"
+            onClick={() => (acceptWouldExceed ? setConfirmingAccept(true) : accept(m.id))}
+          >
+            Accept
+          </button>
         )}
       </div>
     </div>

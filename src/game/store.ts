@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { persistentStorage } from './idbStorage'
 import { saveFlightLog } from './flightLogStorage'
+import { computeDutyMinutes } from './flightlog'
+import { penaltyFactor } from './duty'
 import type { DerivedFlight } from './flightlog'
 import type {
   GameState,
@@ -11,6 +13,7 @@ import type {
   OwnedAircraft,
   FlightLog,
   FlightLogSummary,
+  DutyEntry,
 } from './types'
 import { getSpec, STARTER_OPTIONS, DEFAULT_STARTER } from '../data/aircraft'
 import { getRegion, tryGetRegion, DEFAULT_REGION } from '../data/regions'
@@ -22,7 +25,7 @@ import {
   maintenanceCost,
 } from './economy'
 
-const SAVE_VERSION = 5
+const SAVE_VERSION = 6
 const SAVE_KEY = 'outback-flying-save'
 const MISSION_BOARD_TARGET = 7
 
@@ -73,7 +76,8 @@ export interface PersistedSave {
  *  - v2: add home base / pilot location fields
  *  - v3: remap removed aircraft spec ids
  *  - v4: add the region id and synthesise an operator profile
- *  - v5: default the flightLogs list */
+ *  - v5: default the flightLogs list
+ *  - v6: seed the duty log from flight logs */
 export function migratePersistedState(persisted: unknown, version: number): PersistedSave {
   const state = persisted as PersistedSave
   const g = state?.game
@@ -103,6 +107,21 @@ export function migratePersistedState(persisted: unknown, version: number): Pers
 
   // SimConnect flight logs (v5).
   if (!g.flightLogs) g.flightLogs = []
+
+  // Duty log (v6): seed from recorded flight logs so an in-progress save keeps
+  // its history. A flight log with no missionId is a SimConnect free flight.
+  // Single idempotent guard — never re-seeds an existing dutyLog.
+  if (!g.dutyLog) {
+    g.dutyLog = (g.flightLogs ?? []).map(
+      (fl): DutyEntry => ({
+        id: uid('duty'),
+        day: fl.day,
+        minutes: fl.dutyMinutes,
+        kind: fl.missionId ? ('MISSION' as const) : ('FREE' as const),
+        missionId: fl.missionId,
+      })
+    )
+  }
 
   g.version = SAVE_VERSION
   return state
@@ -138,6 +157,7 @@ function makeInitialState(companyName: string, startSpecId: string, regionId: st
     acceptedMissions: [],
     ledger: [],
     flightLogs: [],
+    dutyLog: [],
     stats: { missionsCompleted: 0, missionsFailed: 0, hoursFlown: 0, totalEarned: 0 },
   }
   post(
@@ -169,6 +189,7 @@ export interface FlyOutcome {
   maintenance?: number
   net?: number
   onTime?: boolean
+  dutyFactor?: number // 1 = no duty penalty, 0.5 = half reward, 0 = none
 }
 
 // A SimConnect-recorded flight ready to commit (issue #9, Phase 4). `missionId`
@@ -217,6 +238,30 @@ function post(
     balanceAfter,
   })
   if (amount > 0 && category !== 'OPENING') g.stats.totalEarned += amount
+}
+
+/** Log a flight's duty and, when it breaches a limit, withhold reward via a
+ *  PENALTY line. `dutyMinutes` must be this flight's duty; the factor is read
+ *  BEFORE the entry is appended, so the "already over" case works. Returns the
+ *  reward factor and the withheld dollars so callers can fold them into `net`. */
+function applyDuty(
+  g: GameState,
+  dutyMinutes: number,
+  kind: DutyEntry['kind'],
+  missionId: string | undefined,
+  reward: number
+): { factor: number; withheld: number } {
+  const factor = penaltyFactor(g.dutyLog, g.day, dutyMinutes)
+  g.dutyLog.push({ id: uid('duty'), day: g.day, minutes: dutyMinutes, kind, missionId })
+  const withheld = reward > 0 && factor < 1 ? Math.round(reward * (1 - factor)) : 0
+  if (withheld > 0) {
+    post(g, 'PENALTY', `Duty-time violation — ${factor === 0 ? '100%' : '50%'} reward withheld`, -withheld)
+    // The reward line already added the full amount to totalEarned via post().
+    // A duty violation *withholds* reward (unlike a late-completion fine), so
+    // back the withheld portion out — totalEarned means reward actually kept.
+    g.stats.totalEarned -= withheld
+  }
+  return { factor, withheld }
 }
 
 export const useGame = create<Store>()(
@@ -310,8 +355,11 @@ export const useGame = create<Store>()(
         // Remove from accepted.
         g.acceptedMissions = g.acceptedMissions.filter((m) => m.id !== mission.id)
 
+        const dutyMinutes = computeDutyMinutes(report.blockMinutes, report.landings)
+        const { factor: dutyFactor, withheld } = applyDuty(g, dutyMinutes, 'MISSION', mission.id, mission.reward)
+
         set({ game: g, operator })
-        const net = mission.reward - fuel - maint - (onTime ? 0 : mission.penalty)
+        const net = mission.reward - withheld - fuel - maint - (onTime ? 0 : mission.penalty)
         return {
           ok: true,
           onTime,
@@ -319,9 +367,12 @@ export const useGame = create<Store>()(
           fuel,
           maintenance: maint,
           net,
-          message: onTime
-            ? `Mission complete. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
-            : `Completed late — reputation and a penalty applied. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`,
+          dutyFactor,
+          message:
+            (onTime
+              ? `Mission complete. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
+              : `Completed late — reputation and a penalty applied. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`) +
+            (withheld > 0 ? ` ⚠ Duty-time violation: ${dutyFactor === 0 ? '100%' : '50%'} of the reward withheld.` : ''),
         }
       },
 
@@ -413,7 +464,10 @@ export const useGame = create<Store>()(
           operator = s.operator ? { ...s.operator, xp: s.operator.xp + xp } : s.operator
         }
 
-        const net = reward - fuel - maint - (mission && !onTime ? mission.penalty : 0)
+        const dutyKind: DutyEntry['kind'] = mission ? 'MISSION' : 'FREE'
+        const { factor: dutyFactor, withheld } = applyDuty(g, derived.dutyMinutes, dutyKind, missionId, reward)
+
+        const net = reward - withheld - fuel - maint - (mission && !onTime ? mission.penalty : 0)
         const summary: FlightLogSummary = {
           id: uid('fl'),
           day: g.day,
@@ -453,11 +507,14 @@ export const useGame = create<Store>()(
           fuel,
           maintenance: maint,
           net,
-          message: mission
-            ? onTime
-              ? `Mission complete. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
-              : `Completed late — reputation and a penalty applied. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
-            : `Flight logged. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}.`,
+          dutyFactor,
+          message:
+            (mission
+              ? onTime
+                ? `Mission complete. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
+                : `Completed late — reputation and a penalty applied. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
+              : `Flight logged. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}.`) +
+            (withheld > 0 ? ` ⚠ Duty-time violation: ${dutyFactor === 0 ? '100%' : '50%'} of the reward withheld.` : ''),
         }
       },
 
@@ -481,6 +538,8 @@ export const useGame = create<Store>()(
         ac.locationIcao = toIcao
         g.pilotLocationIcao = toIcao
         g.stats.hoursFlown = +(g.stats.hoursFlown + blockMinutes / 60).toFixed(2)
+
+        applyDuty(g, computeDutyMinutes(blockMinutes, 1), 'FERRY', undefined, 0)
 
         set({ game: g })
         return { ok: true, message: `Repositioned ${ac.registration} to ${toIcao}. Cost $${(fuel + maint).toLocaleString()}.` }
