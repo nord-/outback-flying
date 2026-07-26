@@ -1,12 +1,16 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { persistentStorage } from './idbStorage'
+import { saveFlightLog } from './flightLogStorage'
+import type { DerivedFlight } from './flightlog'
 import type {
   GameState,
   LedgerCategory,
   Mission,
   OperatorProfile,
   OwnedAircraft,
+  FlightLog,
+  FlightLogSummary,
 } from './types'
 import { getSpec, STARTER_OPTIONS, DEFAULT_STARTER } from '../data/aircraft'
 import { getRegion, tryGetRegion, DEFAULT_REGION } from '../data/regions'
@@ -18,7 +22,7 @@ import {
   maintenanceCost,
 } from './economy'
 
-const SAVE_VERSION = 4
+const SAVE_VERSION = 5
 const SAVE_KEY = 'outback-flying-save'
 const MISSION_BOARD_TARGET = 7
 
@@ -68,7 +72,8 @@ export interface PersistedSave {
 /** Migrate an older persisted save forward to the current SAVE_VERSION:
  *  - v2: add home base / pilot location fields
  *  - v3: remap removed aircraft spec ids
- *  - v4: add the region id and synthesise an operator profile */
+ *  - v4: add the region id and synthesise an operator profile
+ *  - v5: default the flightLogs list */
 export function migratePersistedState(persisted: unknown, version: number): PersistedSave {
   const state = persisted as PersistedSave
   const g = state?.game
@@ -95,6 +100,9 @@ export function migratePersistedState(persisted: unknown, version: number): Pers
   } else if (!state.operator.startRegionId || !tryGetRegion(state.operator.startRegionId)) {
     state.operator.startRegionId = g.regionId
   }
+
+  // SimConnect flight logs (v5).
+  if (!g.flightLogs) g.flightLogs = []
 
   g.version = SAVE_VERSION
   return state
@@ -129,6 +137,7 @@ function makeInitialState(companyName: string, startSpecId: string, regionId: st
     availableMissions: generateMissions(MISSION_BOARD_TARGET, 1, 50, [getSpec(starter.specId)], regionId),
     acceptedMissions: [],
     ledger: [],
+    flightLogs: [],
     stats: { missionsCompleted: 0, missionsFailed: 0, hoursFlown: 0, totalEarned: 0 },
   }
   post(
@@ -162,6 +171,14 @@ export interface FlyOutcome {
   onTime?: boolean
 }
 
+// A SimConnect-recorded flight ready to commit (issue #9, Phase 4). `missionId`
+// is absent for a free flight or reposition — no reward, cost only.
+export interface CommitFlightLogInput {
+  derived: DerivedFlight
+  aircraftId: string
+  missionId?: string
+}
+
 interface Store {
   game: GameState | null
   operator: OperatorProfile | null
@@ -173,6 +190,7 @@ interface Store {
   abandonMission: (missionId: string) => void
   flyMission: (report: FlyReport) => FlyOutcome
   repositionAircraft: (aircraftId: string, toIcao: string, blockMinutes: number, fuelLitres: number) => FlyOutcome
+  commitFlightLog: (input: CommitFlightLogInput) => FlyOutcome
   // fleet
   buyAircraft: (specId: string, baseIcao: string) => { ok: boolean; message: string }
   sellAircraft: (aircraftId: string) => void
@@ -304,6 +322,142 @@ export const useGame = create<Store>()(
           message: onTime
             ? `Mission complete. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
             : `Completed late — reputation and a penalty applied. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`,
+        }
+      },
+
+      // Commits a SimConnect-verified recording (issue #9, Phase 4) — the
+      // live-recording sibling of flyMission. `missionId` is optional: a free
+      // flight or reposition still gets logged and charged, just with no
+      // mission reward. Reuses the same economy rules (post(), conditionLoss)
+      // as flyMission/repositionAircraft so fuel/maintenance/wear stay
+      // consistent regardless of how the flight was reported.
+      commitFlightLog: (input) => {
+        const s = get()
+        if (!s.game) return { ok: false, message: 'No active game.' }
+        const g = structuredClone(s.game)
+        const { derived, aircraftId, missionId } = input
+
+        const ac = g.fleet.find((a) => a.id === aircraftId)
+        if (!ac) return { ok: false, message: 'Aircraft not found.' }
+        const spec = getSpec(ac.specId)
+        if (derived.landings < 1) return { ok: false, message: 'The recording has no completed landing yet.' }
+
+        // Mirrors flyMission's location check: the recorded departure is only
+        // trustworthy as *this* aircraft's takeoff point if the game already
+        // had it there. Without this, a recording could "teleport" an
+        // aircraft the game thinks is elsewhere — skipping a paid reposition —
+        // to wherever the sim flight actually started.
+        if (derived.startIcao && ac.locationIcao !== derived.startIcao) {
+          return {
+            ok: false,
+            message: `${ac.registration} is at ${ac.locationIcao}, not ${derived.startIcao}. Reposition it first.`,
+          }
+        }
+
+        let mission: Mission | undefined
+        if (missionId) {
+          mission = g.acceptedMissions.find((m) => m.id === missionId)
+          if (!mission) return { ok: false, message: 'Mission not found.' }
+          if (derived.startIcao !== mission.fromIcao) {
+            return {
+              ok: false,
+              message: `Recorded departure (${derived.startIcao ?? 'unrecognised field'}) does not match the mission's ${mission.fromIcao}.`,
+            }
+          }
+          if (derived.endIcao !== mission.toIcao) {
+            return {
+              ok: false,
+              message: `Recorded arrival (${derived.endIcao ?? 'unrecognised field'}) does not match the mission's ${mission.toIcao}.`,
+            }
+          }
+          // Seat capacity is a real game rule (unlike range — the recording
+          // already proves this aircraft can cover the distance), so mirror
+          // flyMission's check rather than let SimConnect verification bypass it.
+          if (spec.seats < mission.seatsRequired) {
+            return { ok: false, message: `${spec.name} seats ${spec.seats}; mission needs ${mission.seatsRequired}.` }
+          }
+        }
+
+        const price = g.fuel[spec.fuelType]
+        const fuel = fuelCost(derived.fuelUsedL, price)
+        const maint = maintenanceCost(derived.blockMinutes, spec.maintPerHour)
+        const onTime = mission ? g.day <= mission.expiresDay : true
+
+        if (mission) post(g, 'MISSION', mission.title, mission.reward)
+        post(g, 'FUEL', `Fuel — ${ac.registration} (${derived.fuelUsedL.toFixed(0)} L ${spec.fuelType})`, -fuel)
+        post(g, 'MAINTENANCE', `Maintenance — ${ac.registration}`, -maint)
+
+        ac.hoursFlown = +(ac.hoursFlown + derived.blockMinutes / 60).toFixed(2)
+        ac.condition = clamp(+(ac.condition - conditionLoss(derived.blockMinutes)).toFixed(2), 0, 100)
+        if (derived.endIcao) {
+          ac.locationIcao = derived.endIcao
+          g.pilotLocationIcao = derived.endIcao
+        }
+        g.stats.hoursFlown = +(g.stats.hoursFlown + derived.blockMinutes / 60).toFixed(2)
+
+        let reward = 0
+        let xp = 0
+        let operator = s.operator
+        if (mission) {
+          reward = mission.reward
+          if (onTime) g.reputation = clamp(g.reputation + mission.reputationReward, 0, 100)
+          else {
+            post(g, 'PENALTY', `Late completion — ${mission.title}`, -mission.penalty)
+            g.reputation = clamp(g.reputation - 2, 0, 100)
+          }
+          g.stats.missionsCompleted += 1
+          g.acceptedMissions = g.acceptedMissions.filter((m) => m.id !== mission!.id)
+
+          // Career experience accrues to the operator (persists across regions).
+          xp = xpForMission(mission)
+          operator = s.operator ? { ...s.operator, xp: s.operator.xp + xp } : s.operator
+        }
+
+        const net = reward - fuel - maint - (mission && !onTime ? mission.penalty : 0)
+        const summary: FlightLogSummary = {
+          id: uid('fl'),
+          day: g.day,
+          missionId,
+          aircraftId,
+          legs: derived.legs,
+          startIcao: derived.startIcao,
+          endIcao: derived.endIcao,
+          intermediates: derived.intermediates,
+          blockMinutes: derived.blockMinutes,
+          flightMinutes: derived.flightMinutes,
+          dutyMinutes: derived.dutyMinutes,
+          distanceNm: derived.distanceNm,
+          fuelUsedL: derived.fuelUsedL,
+          landings: derived.landings,
+          earnings: net,
+        }
+        g.flightLogs.unshift(summary)
+
+        set({ game: g, operator })
+
+        // The full record (with its track) is persisted separately and
+        // asynchronously — see flightLogStorage.ts. A failure here loses the
+        // track but not the summary already committed to GameState above.
+        const fullLog: FlightLog = {
+          ...summary,
+          simAircraftTitle: derived.simAircraftTitle,
+          simAtcModel: derived.simAtcModel,
+          track: derived.track,
+        }
+        saveFlightLog(fullLog).catch((err) => console.warn('[flightlog] could not persist track', err))
+
+        return {
+          ok: true,
+          onTime,
+          reward,
+          fuel,
+          maintenance: maint,
+          net,
+          message: mission
+            ? onTime
+              ? `Mission complete. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
+              : `Completed late — reputation and a penalty applied. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
+            : `Flight logged. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}.`,
         }
       },
 

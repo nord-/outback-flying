@@ -12,6 +12,7 @@ import { Missions } from './components/Missions'
 import { Fleet } from './components/Fleet'
 import { Market } from './components/Market'
 import { Ledger } from './components/Ledger'
+import { Logbook } from './components/Logbook'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -19,6 +20,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'fleet', label: 'Fleet' },
   { id: 'market', label: 'Market' },
   { id: 'ledger', label: 'Ledger' },
+  { id: 'logbook', label: 'Logbook' },
 ]
 
 export function App() {
@@ -166,6 +168,7 @@ export function App() {
           {tab === 'fleet' && <Fleet />}
           {tab === 'market' && <Market />}
           {tab === 'ledger' && <Ledger />}
+          {tab === 'logbook' && <Logbook />}
         </main>
 
         {toast && <div className="toast">{toast}</div>}
