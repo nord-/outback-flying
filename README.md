@@ -81,8 +81,22 @@ components only render state and dispatch actions through the Zustand store
 
 ## Roadmap ideas
 
+### Shipped
+
+- **Choose your region at the start of a game** — the Australian outback, East
+  Africa, or Alaska & the North, each with its own airports, home base, fuel
+  prices and mission flavour. The mission board, fleet market, ferry
+  destinations and operations map are all scoped to the chosen region.
+- **Operator profile with experience & rank** — a persistent career (name, XP,
+  rank) that sits above the per-region station, so it can carry across a future
+  region transfer. Flying missions earns XP and advances your pilot rank.
+
 ### High priority
 
+- **Transfer between regions** while keeping your experience, reputation and
+  cash — relocate the operator to a fresh station in another region so a single
+  career can expand across the globe. (The operator profile is the foundation
+  for this; the transfer action itself is the remaining piece.)
 - **SimConnect / log-file integration** to auto-verify flights — read block
   time, fuel burn and landings straight from the simulator instead of trusting
   hand-entered figures.
@@ -91,11 +105,6 @@ components only render state and dispatch actions through the Zustand store
   have Avgas but no Jet A-1 (or nothing at all), so range planning and where you
   can refuel become part of the challenge — you may need to tanker fuel or route
   via a field that has what your aircraft burns.
-- **Multiple regions / bases around the world** — pick your starting region when
-  you begin a new game (the Australian outback, the African bush, the North
-  American backcountry, etc.), each with its own airports, distances and
-  flavour. **Transfer between regions** while keeping your experience, reputation
-  and cash, so a single operation can expand across the globe.
 
 ### Later
 

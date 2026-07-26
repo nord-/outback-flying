@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useGame } from '../game/store'
 import { AIRCRAFT_SPECS } from '../data/aircraft'
-import { BASES } from '../data/airports'
+import { basesInRegion } from '../data/airports'
 import { useUI } from './ui'
 import { money, FUEL_LABEL } from '../game/format'
 
@@ -9,7 +9,8 @@ export function Market() {
   const game = useGame((s) => s.game)!
   const buy = useGame((s) => s.buyAircraft)
   const { notify } = useUI()
-  const [base, setBase] = useState(BASES[0].icao)
+  const bases = basesInRegion(game.regionId)
+  const [base, setBase] = useState(bases[0].icao)
 
   return (
     <div>
@@ -18,7 +19,7 @@ export function Market() {
         <div className="field" style={{ minWidth: 260 }}>
           <label className="tiny">Deliver new aircraft to</label>
           <select value={base} onChange={(e) => setBase(e.target.value)}>
-            {BASES.map((b) => (
+            {bases.map((b) => (
               <option key={b.icao} value={b.icao}>{b.icao} — {b.name}</option>
             ))}
           </select>

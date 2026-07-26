@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useGame } from '../game/store'
 import { useUI } from './ui'
 import { getSpec } from '../data/aircraft'
-import { AIRPORTS, getAirport } from '../data/airports'
+import { airportsInRegion, getAirport } from '../data/airports'
 import { distanceNm } from '../game/geo'
 import {
   fuelCost,
@@ -22,11 +22,12 @@ export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft
 
   const destinations = useMemo(
     () =>
-      AIRPORTS.filter((a) => a.icao !== aircraft.locationIcao)
+      airportsInRegion(game.regionId)
+        .filter((a) => a.icao !== aircraft.locationIcao)
         .map((a) => ({ a, dist: Math.round(distanceNm(from, a)) }))
         .filter((d) => d.dist <= spec.rangeNm)
         .sort((x, y) => x.dist - y.dist),
-    [aircraft.locationIcao, from, spec.rangeNm]
+    [game.regionId, aircraft.locationIcao, from, spec.rangeNm]
   )
 
   const [toIcao, setToIcao] = useState(destinations[0]?.a.icao ?? '')

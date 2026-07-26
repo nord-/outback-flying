@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { migratePersistedState, useGame, getHydrationError } from './store'
 import { getSpec } from '../data/aircraft'
+import { airportsInRegion } from '../data/airports'
 import type { GameState, OwnedAircraft } from './types'
 
 const aircraft = (locationIcao: string): OwnedAircraft => ({
@@ -36,7 +37,13 @@ describe('migratePersistedState', () => {
     const out = migratePersistedState(legacySave('YBHI'), 1)
     expect(out.game?.homeBaseIcao).toBe('YBAS')
     expect(out.game?.pilotLocationIcao).toBe('YBHI')
-    expect(out.game?.version).toBe(3)
+    expect(out.game?.version).toBe(4)
+  })
+
+  it('adds the outback region id and synthesises an operator profile', () => {
+    const out = migratePersistedState(legacySave('YBHI'), 1)
+    expect(out.game?.regionId).toBe('outback')
+    expect(out.operator).toMatchObject({ name: 'Test Air', xp: 0, startRegionId: 'outback' })
   })
 
   it('falls back to YBAS when the fleet is empty', () => {
@@ -61,10 +68,28 @@ describe('migratePersistedState', () => {
 
   it('leaves a save from a newer version untouched', () => {
     const save = legacySave('YBHI')
-    save.game!.version = 4
-    const out = migratePersistedState(save, 4)
-    expect(out.game?.version).toBe(4)
+    save.game!.version = 5
+    const out = migratePersistedState(save, 5)
+    expect(out.game?.version).toBe(5)
     expect(out.game?.homeBaseIcao).toBeUndefined()
+  })
+
+  it('normalizes an unknown regionId instead of trusting a corrupt save', () => {
+    const save = legacySave('YBHI')
+    ;(save.game as unknown as { regionId: string }).regionId = 'atlantis'
+    const out = migratePersistedState(save, 4)
+    expect(out.game?.regionId).toBe('outback')
+  })
+
+  it('normalizes an unknown operator.startRegionId instead of trusting a corrupt save', () => {
+    const save = legacySave('YBHI') as unknown as {
+      game: GameState
+      operator: { name: string; xp: number; startRegionId: string }
+    }
+    save.game.regionId = 'africa'
+    save.operator = { name: 'Test Air', xp: 0, startRegionId: 'atlantis' }
+    const out = migratePersistedState(save, 4)
+    expect(out.operator?.startRegionId).toBe('africa')
   })
 })
 
@@ -104,12 +129,58 @@ describe('newGame starter selection', () => {
   afterEach(() => useGame.getState().resetGame())
 })
 
+describe('newGame regions and operator profile', () => {
+  it('defaults to the outback region at Alice Springs', () => {
+    useGame.getState().newGame('Test Air', 'c172')
+    const g = useGame.getState().game!
+    expect(g.regionId).toBe('outback')
+    expect(g.homeBaseIcao).toBe('YBAS')
+    expect(g.pilotLocationIcao).toBe('YBAS')
+    expect(g.fleet[0].locationIcao).toBe('YBAS')
+  })
+
+  it('gives aircraft region-flavoured registrations', () => {
+    useGame.getState().newGame('Test Air', 'c172')
+    expect(useGame.getState().game!.fleet[0].registration).toMatch(/^VH-[A-Z]{3}$/)
+    useGame.getState().resetGame()
+
+    useGame.getState().newGame('Test Air', 'c172', 'africa')
+    expect(useGame.getState().game!.fleet[0].registration).toMatch(/^5Y-[A-Z]{3}$/)
+    useGame.getState().resetGame()
+
+    useGame.getState().newGame('Test Air', 'c172', 'namerica')
+    expect(useGame.getState().game!.fleet[0].registration).toMatch(/^N\d{3}[A-Z]{2}$/)
+  })
+
+  it('starts an East Africa operation at Nairobi Wilson', () => {
+    useGame.getState().newGame('Test Air', 'c172', 'africa')
+    const g = useGame.getState().game!
+    expect(g.regionId).toBe('africa')
+    expect(g.homeBaseIcao).toBe('HKNW')
+    expect(g.fleet[0].locationIcao).toBe('HKNW')
+    // Every generated mission stays within the chosen region.
+    const africaIcaos = new Set(airportsInRegion('africa').map((a) => a.icao))
+    for (const m of g.availableMissions) {
+      expect(africaIcaos.has(m.fromIcao)).toBe(true)
+      expect(africaIcaos.has(m.toIcao)).toBe(true)
+    }
+  })
+
+  it('creates an operator profile that records the starting region', () => {
+    useGame.getState().newGame('Red Centre Air', 'c172', 'namerica')
+    const op = useGame.getState().operator!
+    expect(op).toMatchObject({ name: 'Red Centre Air', xp: 0, startRegionId: 'namerica' })
+  })
+
+  afterEach(() => useGame.getState().resetGame())
+})
+
 describe('migratePersistedState catalogue remap', () => {
-  it('remaps removed spec ids and stamps version 3', () => {
+  it('remaps removed spec ids and stamps the current version', () => {
     const out = migratePersistedState(legacySave('YBAS'), 2)
     // legacySave() builds a fleet aircraft with the removed specId 'c210'
     expect(out.game?.fleet[0].specId).toBe('bonanza')
-    expect(out.game?.version).toBe(3)
+    expect(out.game?.version).toBe(4)
     expect(() => getSpec(out.game!.fleet[0].specId)).not.toThrow()
   })
 

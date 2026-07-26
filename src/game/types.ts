@@ -3,10 +3,11 @@ export type FuelType = 'AVGAS' | 'JETA'
 export interface Airport {
   icao: string
   name: string
-  state: string // Australian state/territory code
+  state: string // sub-locale label (state / territory / country)
+  region: string // id of the world region this airport belongs to
   lat: number
   lon: number
-  isBase: boolean // Royal Flying Doctor Service-style base / major hub
+  isBase: boolean // major hub where missions tend to originate
 }
 
 export interface AircraftSpec {
@@ -84,9 +85,21 @@ export interface FuelPrices {
   JETA: number
 }
 
+/**
+ * The persistent career identity. It survives region transfers — the active
+ * station (GameState) is recreated per region, but the operator carries on,
+ * keeping the company name and accumulated experience.
+ */
+export interface OperatorProfile {
+  name: string
+  xp: number // career experience; rank is derived from this
+  startRegionId: string // region the career began in
+}
+
 export interface GameState {
   version: number
   companyName: string
+  regionId: string // world region this station operates in
   homeBaseIcao: string // operation's home base (RFDS-style); default YBAS
   pilotLocationIcao: string // where the single pilot currently is
   balance: number
