@@ -4,7 +4,8 @@ import { useUI } from './ui'
 import { useFlightRecorder } from '../sim/useFlightRecorder'
 import { getSpec } from '../data/aircraft'
 import { getAirport } from '../data/airports'
-import { matchesAircraft } from '../game/flightlog'
+import { matchesAircraft, computeDutyMinutes, type DerivedFlight } from '../game/flightlog'
+import { wouldBeOver, isOverAnyLimit } from '../game/duty'
 import {
   fuelCost,
   maintenanceCost,
@@ -60,6 +61,9 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
   const [landings, setLandings] = useState('1')
   const [err, setErr] = useState('')
   const [recordErr, setRecordErr] = useState('')
+  // A finished recording held back for a duty-crossing confirmation before it
+  // commits — record mode can't estimate duty live (no block time until Finish).
+  const [pendingRecord, setPendingRecord] = useState<DerivedFlight | null>(null)
 
   // Re-seed suggestions when the aircraft changes.
   const [lastAc, setLastAc] = useState(aircraftId)
@@ -75,6 +79,12 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
   const fCost = selected ? fuelCost(fuelN || 0, fuelPrice) : 0
   const mCost = selected ? maintenanceCost(blockN || 0, selected.spec.maintPerHour) : 0
   const net = mission.reward - fCost - mCost
+
+  const manualDutyEst = computeDutyMinutes(blockN || 0, Number(landings) || 1)
+  const dutyAlreadyOver = isOverAnyLimit(game.dutyLog, game.day)
+  // Only warn about crossing once a real block time is entered — an untouched
+  // form (blockN 0 → est 60) must not raise a false "will put you over".
+  const dutyWouldExceed = blockN > 0 && wouldBeOver(game.dutyLog, game.day, manualDutyEst)
 
   const submit = () => {
     setErr('')
@@ -101,12 +111,15 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
 
   const finishRecording = () => {
     setRecordErr('')
-    const derived = recorder.finish()
+    // On the confirm press, reuse the flight already held in pendingRecord —
+    // recorder.finish() has consumed the recording and reset the recorder.
+    const derived = pendingRecord ?? recorder.finish()
     if (!derived) {
       setRecordErr("No completed landing yet — keep flying until you've landed, then finish the flight.")
       return
     }
     if (
+      !pendingRecord &&
       selected &&
       canVerifyAircraft &&
       !matchesAircraft(selected.spec, { title: derived.simAircraftTitle, atcModel: derived.simAtcModel })
@@ -116,11 +129,24 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
       )
       return
     }
+    // Record mode has no block time until now, so a flight that *crosses* a duty
+    // limit (50% withheld) can only be flagged here, at Finish. Hold it for one
+    // inline confirmation before committing. (The already-over case, 0% reward,
+    // was already surfaced live during recording, so it commits straight through.)
+    if (
+      !pendingRecord &&
+      !isOverAnyLimit(game.dutyLog, game.day) &&
+      wouldBeOver(game.dutyLog, game.day, derived.dutyMinutes)
+    ) {
+      setPendingRecord(derived)
+      return
+    }
     const res = commitFlightLog({ derived, aircraftId, missionId: mission.id })
     if (!res.ok) {
       setRecordErr(res.message)
       return
     }
+    setPendingRecord(null)
     notify(res.message)
     onClose()
   }
@@ -217,6 +243,13 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
                         ⚠ Past deadline (day {mission.expiresDay}). A late penalty of {money(mission.penalty)} will apply.
                       </div>
                     )}
+                    {(dutyAlreadyOver || dutyWouldExceed) && (
+                      <div className="tiny" style={{ color: 'var(--red)', marginTop: 6 }}>
+                        ⚠ {dutyAlreadyOver
+                          ? 'You are already over a duty-time limit — this flight earns no reward.'
+                          : 'This flight will put you over a duty-time limit — 50% of the reward will be withheld.'}
+                      </div>
+                    )}
                   </div>
 
                   {err && <div className="notice err">{err}</div>}
@@ -243,7 +276,28 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
                     </div>
                   )}
 
-                  {recorder.phase === 'idle' ? (
+                  {pendingRecord ? (
+                    <div className="summary-box">
+                      <div className="notice warn">
+                        ⚠ This recorded flight crosses a duty-time limit — 50% of the reward will be withheld on
+                        commit.
+                      </div>
+                      <div className="row" style={{ marginTop: 10 }}>
+                        <button
+                          className="btn ghost"
+                          onClick={() => {
+                            setPendingRecord(null)
+                            recorder.cancel()
+                          }}
+                        >
+                          Discard
+                        </button>
+                        <button className="btn primary" onClick={finishRecording}>
+                          Commit anyway
+                        </button>
+                      </div>
+                    </div>
+                  ) : recorder.phase === 'idle' ? (
                     <button
                       className="btn primary"
                       disabled={recorder.simStatus !== 'connected'}
@@ -273,6 +327,12 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
                               {recorder.sample.onGround ? 'GND' : 'AIR'} · {recorder.sample.groundKts.toFixed(0)} kt ·{' '}
                               {recorder.sample.altFt.toFixed(0)} ft
                             </span>
+                          </div>
+                        )}
+                        {dutyAlreadyOver && (
+                          <div className="line" style={{ color: 'var(--red)' }}>
+                            <span>⚠ Duty</span>
+                            <span>Over a limit — this flight earns no reward</span>
                           </div>
                         )}
                       </div>

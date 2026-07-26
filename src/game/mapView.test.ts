@@ -37,6 +37,7 @@ function game(over: Partial<GameState> = {}): GameState {
     acceptedMissions: [],
     ledger: [],
     flightLogs: [],
+    dutyLog: [],
     stats: { missionsCompleted: 0, missionsFailed: 0, hoursFlown: 0, totalEarned: 0 },
     ...over,
   }

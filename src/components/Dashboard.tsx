@@ -3,6 +3,7 @@ import { getSpec } from '../data/aircraft'
 import { getAirport } from '../data/airports'
 import { money, price, FUEL_LABEL } from '../game/format'
 import { rankFor, rankProgress } from '../game/progression'
+import { dutyStatus } from '../game/duty'
 import { OperationsMap } from './OperationsMap'
 
 export function Dashboard() {
@@ -13,6 +14,8 @@ export function Dashboard() {
   const xp = operator?.xp ?? 0
   const rank = rankFor(xp)
   const progress = rankProgress(xp)
+  const duty = dutyStatus(game.dutyLog, game.day)
+  const DUTY_LABEL: Record<number, string> = { 1: 'Today', 7: '7 days', 14: '14 days', 28: '28 days' }
 
   return (
     <div>
@@ -54,6 +57,33 @@ export function Dashboard() {
         </div>
         <div className="meter rep mt"><span style={{ width: `${Math.round(progress.pct * 100)}%` }} /></div>
         <p className="tiny muted mt">Experience carries with you across region transfers.</p>
+      </div>
+
+      <div className="card mb">
+        <h3>Duty time</h3>
+        <div className="grid cols-4 mt">
+          {duty.map((d) => {
+            // Truncate to 0.1 h (never round up — 599 min must not read as 10.0 h
+            // and imply the player is at the limit when they are still under it).
+            const usedH = (Math.floor(d.used / 6) / 10).toFixed(1)
+            const limitH = (d.limit / 60).toFixed(0)
+            const pct = Math.min(100, (d.used / d.limit) * 100)
+            return (
+              <div key={d.days}>
+                <span className="k-label" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.7, color: 'var(--faint)' }}>
+                  {DUTY_LABEL[d.days]}
+                </span>
+                <div className="k-value" style={{ fontSize: 18, fontWeight: 700, color: d.over ? 'var(--red)' : 'var(--text)' }}>
+                  {usedH}<span className="tiny muted"> / {limitH} h</span>
+                </div>
+                <div className="meter rep mt">
+                  <span style={{ width: `${pct}%`, background: d.over ? 'var(--red)' : undefined }} />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        <p className="tiny muted mt">Duty = block time + 30 min per stop. Flying over a limit withholds reward.</p>
       </div>
 
       <div className="grid cols-2">

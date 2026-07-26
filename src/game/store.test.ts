@@ -2,8 +2,44 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { migratePersistedState, useGame, getHydrationError } from './store'
 import { getSpec } from '../data/aircraft'
 import { airportsInRegion } from '../data/airports'
+import { maintenanceCost } from './economy'
 import type { GameState, OwnedAircraft, Mission } from './types'
 import type { DerivedFlight } from './flightlog'
+
+const mission = (over: Partial<Mission> = {}): Mission => ({
+  id: 'm1',
+  type: 'MEDEVAC',
+  title: 'Test run',
+  description: '',
+  fromIcao: 'YBAS',
+  toIcao: 'YBHI',
+  distanceNm: 635,
+  seatsRequired: 1,
+  urgency: 'ROUTINE',
+  reward: 5000,
+  penalty: 1000,
+  postedDay: 1,
+  expiresDay: 10,
+  reputationReward: 2,
+  ...over,
+})
+
+const derived = (over: Partial<DerivedFlight> = {}): DerivedFlight => ({
+  legs: [{ fromIcao: 'YBAS', toIcao: 'YBHI', blockMinutes: 130, flightMinutes: 110, distanceNm: 635, fuelUsedL: 90 }],
+  startIcao: 'YBAS',
+  endIcao: 'YBHI',
+  intermediates: [],
+  blockMinutes: 130,
+  flightMinutes: 110,
+  dutyMinutes: 190,
+  distanceNm: 635,
+  fuelUsedL: 90,
+  landings: 1,
+  track: [],
+  simAircraftTitle: 'Black Square A36TC Bonanza Professional N3475M',
+  simAtcModel: 'Bonanza',
+  ...over,
+})
 
 const aircraft = (locationIcao: string): OwnedAircraft => ({
   id: 'ac1',
@@ -38,7 +74,7 @@ describe('migratePersistedState', () => {
     const out = migratePersistedState(legacySave('YBHI'), 1)
     expect(out.game?.homeBaseIcao).toBe('YBAS')
     expect(out.game?.pilotLocationIcao).toBe('YBHI')
-    expect(out.game?.version).toBe(5)
+    expect(out.game?.version).toBe(6)
   })
 
   it('adds the outback region id and synthesises an operator profile', () => {
@@ -74,9 +110,9 @@ describe('migratePersistedState', () => {
 
   it('leaves a save from a newer version untouched', () => {
     const save = legacySave('YBHI')
-    save.game!.version = 6
-    const out = migratePersistedState(save, 6)
-    expect(out.game?.version).toBe(6)
+    save.game!.version = 7
+    const out = migratePersistedState(save, 7)
+    expect(out.game?.version).toBe(7)
     expect(out.game?.homeBaseIcao).toBeUndefined()
   })
 
@@ -96,6 +132,27 @@ describe('migratePersistedState', () => {
     save.operator = { name: 'Test Air', xp: 0, startRegionId: 'atlantis' }
     const out = migratePersistedState(save, 4)
     expect(out.operator?.startRegionId).toBe('africa')
+  })
+
+  it('seeds dutyLog from existing flightLogs on a pre-v6 save', () => {
+    const save = legacySave('YBHI')
+    save.game!.flightLogs = [
+      { id: 'fl1', day: 2, missionId: 'm1', dutyMinutes: 150 } as never,
+      { id: 'fl2', day: 3, dutyMinutes: 90 } as never, // free flight, no missionId
+    ]
+    const out = migratePersistedState(save, 1)
+    expect(out.game?.version).toBe(6)
+    expect(out.game?.dutyLog).toHaveLength(2)
+    expect(out.game?.dutyLog[0]).toMatchObject({ day: 2, minutes: 150, kind: 'MISSION', missionId: 'm1' })
+    expect(out.game?.dutyLog[1]).toMatchObject({ day: 3, minutes: 90, kind: 'FREE' })
+  })
+
+  it('does not re-seed a dutyLog that already exists', () => {
+    const save = legacySave('YBHI')
+    save.game!.dutyLog = [{ id: 'keep', day: 1, minutes: 42, kind: 'FERRY' }]
+    save.game!.flightLogs = [{ id: 'fl1', day: 2, dutyMinutes: 150 } as never]
+    const out = migratePersistedState(save, 1)
+    expect(out.game?.dutyLog).toEqual([{ id: 'keep', day: 1, minutes: 42, kind: 'FERRY' }])
   })
 })
 
@@ -183,41 +240,6 @@ describe('newGame regions and operator profile', () => {
 })
 
 describe('commitFlightLog', () => {
-  const mission = (over: Partial<Mission> = {}): Mission => ({
-    id: 'm1',
-    type: 'MEDEVAC',
-    title: 'Test run',
-    description: '',
-    fromIcao: 'YBAS',
-    toIcao: 'YBHI',
-    distanceNm: 635,
-    seatsRequired: 1,
-    urgency: 'ROUTINE',
-    reward: 5000,
-    penalty: 1000,
-    postedDay: 1,
-    expiresDay: 10,
-    reputationReward: 2,
-    ...over,
-  })
-
-  const derived = (over: Partial<DerivedFlight> = {}): DerivedFlight => ({
-    legs: [{ fromIcao: 'YBAS', toIcao: 'YBHI', blockMinutes: 130, flightMinutes: 110, distanceNm: 635, fuelUsedL: 90 }],
-    startIcao: 'YBAS',
-    endIcao: 'YBHI',
-    intermediates: [],
-    blockMinutes: 130,
-    flightMinutes: 110,
-    dutyMinutes: 190,
-    distanceNm: 635,
-    fuelUsedL: 90,
-    landings: 1,
-    track: [],
-    simAircraftTitle: 'Black Square A36TC Bonanza Professional N3475M',
-    simAtcModel: 'Bonanza',
-    ...over,
-  })
-
   afterEach(() => useGame.getState().resetGame())
 
   it('commits a mission flight: pays the reward, logs it, and moves the aircraft', () => {
@@ -311,12 +333,150 @@ describe('commitFlightLog', () => {
   })
 })
 
+describe('commitFlightLog duty', () => {
+  afterEach(() => useGame.getState().resetGame())
+
+  it('logs duty as MISSION when tied to a mission', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const aircraftId = useGame.getState().game!.fleet[0].id
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [mission()] } }))
+    const res = useGame.getState().commitFlightLog({ derived: derived(), aircraftId, missionId: 'm1' })
+    expect(res.ok).toBe(true)
+    const g = useGame.getState().game!
+    expect(g.dutyLog).toHaveLength(1)
+    expect(g.dutyLog[0]).toMatchObject({ minutes: derived().dutyMinutes, kind: 'MISSION', missionId: 'm1' })
+    expect(res.dutyFactor).toBe(1)
+  })
+
+  it('logs a free flight as FREE with no reward penalty', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const aircraftId = useGame.getState().game!.fleet[0].id
+    const res = useGame.getState().commitFlightLog({ derived: derived(), aircraftId })
+    expect(res.ok).toBe(true)
+    expect(useGame.getState().game!.dutyLog[0].kind).toBe('FREE')
+  })
+})
+
+describe('flyMission duty', () => {
+  afterEach(() => useGame.getState().resetGame())
+
+  const placeAndAccept = (block: number) => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const g0 = useGame.getState().game!
+    const ac = g0.fleet[0]
+    const m = mission({ fromIcao: ac.locationIcao, toIcao: 'YBHI', distanceNm: 200, seatsRequired: 1 })
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [m] } }))
+    return useGame.getState().flyMission({
+      missionId: m.id,
+      aircraftId: ac.id,
+      blockMinutes: block,
+      fuelLitres: 100,
+      landings: 1,
+    })
+  }
+
+  it('appends exactly one duty entry using block + 60 (one landing)', () => {
+    placeAndAccept(120)
+    const g = useGame.getState().game!
+    expect(g.dutyLog).toHaveLength(1)
+    expect(g.dutyLog[0]).toMatchObject({ day: 1, minutes: 180, kind: 'MISSION' }) // 120 + 30*2
+  })
+
+  it('gives full reward when under all limits (dutyFactor 1)', () => {
+    const res = placeAndAccept(120)
+    expect(res.dutyFactor).toBe(1)
+  })
+
+  it('withholds 50% when the flight crosses the daily limit', () => {
+    // Pre-load 500 min today; a 120-min-block flight adds 180 => 680 > 600.
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const g0 = useGame.getState().game!
+    const ac = g0.fleet[0]
+    const m = mission({ fromIcao: ac.locationIcao, toIcao: 'YBHI', distanceNm: 200, seatsRequired: 1, reward: 4000 })
+    useGame.setState((s) => ({
+      game: {
+        ...s.game!,
+        acceptedMissions: [m],
+        dutyLog: [{ id: 'pre', day: 1, minutes: 500, kind: 'MISSION' }],
+      },
+    }))
+    const res = useGame.getState().flyMission({
+      missionId: m.id, aircraftId: ac.id, blockMinutes: 120, fuelLitres: 0, landings: 1,
+    })
+    expect(res.dutyFactor).toBe(0.5)
+    const g = useGame.getState().game!
+    // A PENALTY line of -2000 (half of 4000) exists.
+    expect(g.ledger.some((l) => l.category === 'PENALTY' && l.amount === -2000)).toBe(true)
+    // net = reward - withheld - fuel(0) - maint - latePenalty(0)
+    const maint = maintenanceCost(120, getSpec('bonanza').maintPerHour)
+    expect(res.net).toBe(4000 - 2000 - 0 - maint)
+  })
+
+  it('withholds 100% when already over a limit before the flight', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const g0 = useGame.getState().game!
+    const ac = g0.fleet[0]
+    const m = mission({ fromIcao: ac.locationIcao, toIcao: 'YBHI', distanceNm: 200, seatsRequired: 1, reward: 4000 })
+    useGame.setState((s) => ({
+      game: {
+        ...s.game!,
+        acceptedMissions: [m],
+        dutyLog: [{ id: 'pre', day: 1, minutes: 700, kind: 'MISSION' }], // already > 600
+      },
+    }))
+    const res = useGame.getState().flyMission({
+      missionId: m.id, aircraftId: ac.id, blockMinutes: 60, fuelLitres: 0, landings: 1,
+    })
+    expect(res.dutyFactor).toBe(0)
+    const g = useGame.getState().game!
+    expect(g.ledger.some((l) => l.category === 'PENALTY' && l.amount === -4000)).toBe(true)
+    // A fully-withheld reward must not inflate lifetime earnings: totalEarned
+    // counts reward actually kept, so a 100% duty violation nets to zero.
+    expect(g.stats.totalEarned).toBe(0)
+  })
+
+  it('counts only the kept half of the reward in totalEarned on a 50% violation', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const g0 = useGame.getState().game!
+    const ac = g0.fleet[0]
+    const m = mission({ fromIcao: ac.locationIcao, toIcao: 'YBHI', distanceNm: 200, seatsRequired: 1, reward: 4000 })
+    useGame.setState((s) => ({
+      game: {
+        ...s.game!,
+        acceptedMissions: [m],
+        dutyLog: [{ id: 'pre', day: 1, minutes: 500, kind: 'MISSION' }], // 500 + 180 = 680 > 600
+      },
+    }))
+    useGame.getState().flyMission({
+      missionId: m.id, aircraftId: ac.id, blockMinutes: 120, fuelLitres: 0, landings: 1,
+    })
+    // Full 4000 posted, 2000 withheld → 2000 kept.
+    expect(useGame.getState().game!.stats.totalEarned).toBe(2000)
+  })
+})
+
+describe('repositionAircraft duty', () => {
+  afterEach(() => useGame.getState().resetGame())
+
+  it('logs ferry duty as block + 60 with kind FERRY and no reward', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const g0 = useGame.getState().game!
+    const ac = g0.fleet[0]
+    const dest = airportsInRegion(g0.regionId).find((a) => a.icao !== ac.locationIcao)!
+    useGame.getState().repositionAircraft(ac.id, dest.icao, 90, 80)
+    const g = useGame.getState().game!
+    expect(g.dutyLog).toHaveLength(1)
+    expect(g.dutyLog[0]).toMatchObject({ minutes: 150, kind: 'FERRY' }) // 90 + 30*2
+    expect(g.dutyLog[0].missionId).toBeUndefined()
+  })
+})
+
 describe('migratePersistedState catalogue remap', () => {
   it('remaps removed spec ids and stamps the current version', () => {
     const out = migratePersistedState(legacySave('YBAS'), 2)
     // legacySave() builds a fleet aircraft with the removed specId 'c210'
     expect(out.game?.fleet[0].specId).toBe('bonanza')
-    expect(out.game?.version).toBe(5)
+    expect(out.game?.version).toBe(6)
     expect(() => getSpec(out.game!.fleet[0].specId)).not.toThrow()
   })
 
