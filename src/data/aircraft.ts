@@ -17,6 +17,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 120000,
     maintPerHour: 35,
     dailyFixedCost: 45,
+    simMatch: ['152'],
   },
   {
     id: 'c172',
@@ -31,6 +32,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 220000,
     maintPerHour: 45,
     dailyFixedCost: 60,
+    simMatch: ['172', 'skyhawk'],
   },
   {
     id: 'xcub',
@@ -45,6 +47,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 380000,
     maintPerHour: 55,
     dailyFixedCost: 70,
+    simMatch: ['xcub', 'x-cub', 'cub'],
   },
   {
     id: 'bonanza',
@@ -59,6 +62,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 480000,
     maintPerHour: 85,
     dailyFixedCost: 120,
+    simMatch: ['bonanza'],
   },
   {
     id: 'baron',
@@ -73,6 +77,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 700000,
     maintPerHour: 160,
     dailyFixedCost: 190,
+    simMatch: ['baron'],
   },
   {
     id: 'pc6',
@@ -87,6 +92,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 1400000,
     maintPerHour: 180,
     dailyFixedCost: 260,
+    simMatch: ['pc-6', 'pc6', 'porter'],
   },
   {
     id: 'kodiak',
@@ -101,6 +107,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 2000000,
     maintPerHour: 230,
     dailyFixedCost: 310,
+    simMatch: ['kodiak'],
   },
   {
     id: 'c208',
@@ -115,6 +122,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 2200000,
     maintPerHour: 240,
     dailyFixedCost: 320,
+    simMatch: ['208', 'caravan'],
   },
   {
     id: 'b200',
@@ -129,6 +137,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 3600000,
     maintPerHour: 340,
     dailyFixedCost: 480,
+    simMatch: ['king air', 'kingair', 'b350', '350i'],
   },
   {
     id: 'pc12',
@@ -143,6 +152,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 4500000,
     maintPerHour: 300,
     dailyFixedCost: 520,
+    simMatch: ['pc-12', 'pc12'],
   },
 ]
 

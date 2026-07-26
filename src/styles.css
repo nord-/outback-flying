@@ -139,6 +139,9 @@ table.ledger { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.ledger th { text-align: left; color: var(--faint); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 table.ledger td { padding: 9px 10px; border-bottom: 1px solid rgba(42,56,82,0.5); }
 table.ledger tr:hover td { background: rgba(31,43,64,0.4); }
+
+.logbook-row { cursor: pointer; }
+.logbook-row.selected td { background: rgba(90,169,224,0.14); }
 .amount.pos { color: var(--green); }
 .amount.neg { color: var(--red); }
 .cat { font-size: 11px; color: var(--muted); }
@@ -172,6 +175,7 @@ table.ledger tr:hover td { background: rgba(31,43,64,0.4); }
 .notice { padding: 10px 14px; border-radius: 8px; font-size: 13px; }
 .notice.err { background: rgba(224,90,90,0.14); color: var(--red); border: 1px solid rgba(224,90,90,0.3); }
 .notice.ok { background: rgba(75,191,131,0.14); color: var(--green); border: 1px solid rgba(75,191,131,0.3); }
+.notice.warn { background: rgba(232,178,60,0.14); color: var(--amber); border: 1px solid rgba(232,178,60,0.35); }
 
 .empty { text-align: center; color: var(--faint); padding: 50px 20px; font-size: 14px; }
 
@@ -239,3 +243,8 @@ table.ledger tr:hover td { background: rgba(31,43,64,0.4); }
 .sim-chip .sim-label { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .sim-chip select { padding: 3px 6px; font-size: 12px; }
 @keyframes sim-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* FlyModal: manual-entry / SimConnect-recording toggle (issue #9) */
+.mode-toggle { display: flex; gap: 8px; }
+.record-panel { display: flex; flex-direction: column; gap: 10px; }
+.record-panel .sim-chip { align-self: flex-start; }

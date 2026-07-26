@@ -7,7 +7,7 @@ export interface UIApi {
 export const UIContext = createContext<UIApi>({ notify: () => {} })
 export const useUI = () => useContext(UIContext)
 
-export type Tab = 'dashboard' | 'missions' | 'fleet' | 'market' | 'ledger'
+export type Tab = 'dashboard' | 'missions' | 'fleet' | 'market' | 'ledger' | 'logbook'
 
 export interface NavApi {
   tab: Tab

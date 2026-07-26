@@ -23,6 +23,11 @@ export interface AircraftSpec {
   purchaseCost: number
   maintPerHour: number // maintenance $ accrued per flight hour
   dailyFixedCost: number // hangar + insurance per day owned
+  // Lowercase keywords matched against the sim's reported ATC MODEL / TITLE
+  // (see game/flightlog.ts matchesAircraft) so a real-world variant (e.g. a
+  // Bonanza A36) is accepted for this spec (e.g. the G36) — issue #9's
+  // "be forgiving" requirement.
+  simMatch?: string[]
 }
 
 export interface OwnedAircraft {
@@ -96,6 +101,57 @@ export interface OperatorProfile {
   startRegionId: string // region the career began in
 }
 
+// SimConnect-recorded flight log (issue #9). A "flight" can span multiple legs
+// (fuel/overnight stops); ICAOs are null when the recorded position didn't
+// match any airport in our catalogue within tolerance (game/flightlog.ts).
+export interface TrackPoint {
+  t: number // epoch ms when the sample was read
+  lat: number
+  lon: number
+  hdg: number // degrees true
+  gs: number // groundspeed, knots
+  alt: number // indicated altitude, feet
+  onGround: boolean
+}
+
+export interface FlightLeg {
+  fromIcao: string | null
+  toIcao: string | null
+  blockMinutes: number
+  flightMinutes: number
+  distanceNm: number
+  fuelUsedL: number
+}
+
+// The full record, including its (RDP-simplified) track. Kept out of
+// GameState — see FlightLogSummary — and persisted as its own IndexedDB
+// record so a long game's track data doesn't bloat the main save.
+export interface FlightLog {
+  id: string
+  day: number // game day it was committed
+  missionId?: string // absent = free flight / reposition, not tied to a mission
+  aircraftId: string
+  simAircraftTitle: string // sim TITLE, for the forgiveness audit trail
+  simAtcModel: string // sim ATC MODEL, ditto
+  legs: FlightLeg[]
+  startIcao: string | null
+  endIcao: string | null
+  intermediates: string[]
+  blockMinutes: number
+  flightMinutes: number
+  dutyMinutes: number
+  distanceNm: number
+  fuelUsedL: number
+  landings: number
+  earnings: number
+  track: TrackPoint[]
+}
+
+// What actually lives in GameState — everything from FlightLog except the
+// heavy `track` (and the sim-matching audit fields, which aren't needed once
+// the flight is committed).
+export type FlightLogSummary = Omit<FlightLog, 'simAircraftTitle' | 'simAtcModel' | 'track'>
+
 export interface GameState {
   version: number
   companyName: string
@@ -110,6 +166,7 @@ export interface GameState {
   availableMissions: Mission[]
   acceptedMissions: Mission[]
   ledger: LedgerEntry[]
+  flightLogs: FlightLogSummary[]
   stats: {
     missionsCompleted: number
     missionsFailed: number

@@ -1,11 +1,16 @@
-import type { Airport } from './types'
+export const EARTH_RADIUS_NM = 3440.065 // nautical miles
 
-const EARTH_RADIUS_NM = 3440.065 // nautical miles
+/** Anything with a lat/lon — an Airport qualifies structurally, so callers can
+ *  pass either an Airport or a raw coordinate pair. */
+export interface LatLon {
+  lat: number
+  lon: number
+}
 
-const toRad = (deg: number) => (deg * Math.PI) / 180
+export const toRad = (deg: number): number => (deg * Math.PI) / 180
 
-/** Great-circle distance between two airports, in nautical miles. */
-export function distanceNm(a: Airport, b: Airport): number {
+/** Great-circle distance between two points, in nautical miles. */
+export function distanceNm(a: LatLon, b: LatLon): number {
   const dLat = toRad(b.lat - a.lat)
   const dLon = toRad(b.lon - a.lon)
   const lat1 = toRad(a.lat)
@@ -18,7 +23,7 @@ export function distanceNm(a: Airport, b: Airport): number {
 }
 
 /** Initial great-circle bearing from a to b, in degrees (0..360). */
-export function bearingDeg(a: Airport, b: Airport): number {
+export function bearingDeg(a: LatLon, b: LatLon): number {
   const lat1 = toRad(a.lat)
   const lat2 = toRad(b.lat)
   const dLon = toRad(b.lon - a.lon)
