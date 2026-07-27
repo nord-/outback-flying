@@ -218,6 +218,21 @@ table.ledger tr:hover td { background: rgba(31,43,64,0.4); }
   border: none;
 }
 
+/* Active time-critical mission window (issue #11) */
+.tc-window { display: flex; gap: 12px; }
+.tc-map { flex: 1; min-height: 210px; }
+.tc-map .leaflet-root { height: 100%; min-height: 210px; border-radius: 8px; }
+.tc-figures { flex: 0 0 170px; display: flex; flex-direction: column; }
+.tc-label { font-size: 10px; letter-spacing: 1px; color: var(--muted); margin-top: 12px; }
+.tc-clock { font-variant-numeric: tabular-nums; font-weight: 800; font-size: 38px; line-height: 1; color: var(--green); }
+.tc-clock.missed { color: var(--red); }
+.tc-bar { height: 8px; border-radius: 4px; background: rgba(120,140,170,.25); overflow: hidden; margin: 10px 0; }
+.tc-bar > i { display: block; height: 100%; background: linear-gradient(90deg, #e8b23c, #e05a5a); }
+.tc-stat { display: flex; justify-content: space-between; font-size: 13px; padding: 5px 0; border-bottom: 1px solid rgba(120,140,170,.15); }
+.tc-stat .neg { color: var(--red); }
+.tc-stat .pos { color: var(--green); }
+.tc-phase { font-size: 10px; letter-spacing: 1px; color: var(--muted); margin-top: 10px; text-align: right; }
+
 /* Mission picker */
 .picker-row { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); cursor: pointer; }
 .picker-row:hover { border-color: var(--blue); }

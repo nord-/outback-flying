@@ -67,7 +67,7 @@ describe('migratePersistedState', () => {
     const out = migratePersistedState(legacySave('YBHI'), 1)
     expect(out.game?.homeBaseIcao).toBe('YBAS')
     expect(out.game?.pilotLocationIcao).toBe('YBHI')
-    expect(out.game?.version).toBe(9)
+    expect(out.game?.version).toBe(10)
   })
 
   it('adds the outback region id and synthesises an operator profile', () => {
@@ -103,9 +103,9 @@ describe('migratePersistedState', () => {
 
   it('leaves a save from a newer version untouched', () => {
     const save = legacySave('YBHI')
-    save.game!.version = 10
-    const out = migratePersistedState(save, 10)
-    expect(out.game?.version).toBe(10)
+    save.game!.version = 11
+    const out = migratePersistedState(save, 11)
+    expect(out.game?.version).toBe(11)
     expect(out.game?.homeBaseIcao).toBeUndefined()
   })
 
@@ -134,7 +134,7 @@ describe('migratePersistedState', () => {
       { id: 'fl2', day: 3, dutyMinutes: 90 } as never, // free flight, no missionId
     ]
     const out = migratePersistedState(save, 1)
-    expect(out.game?.version).toBe(9)
+    expect(out.game?.version).toBe(10)
     expect(out.game?.dutyLog).toHaveLength(2)
     expect(out.game?.dutyLog[0]).toMatchObject({ day: 2, minutes: 150, kind: 'MISSION', missionId: 'm1' })
     expect(out.game?.dutyLog[1]).toMatchObject({ day: 3, minutes: 90, kind: 'FREE' })
@@ -168,7 +168,7 @@ describe('migratePersistedState', () => {
     expect(out.game!.armedMissions).toEqual([])
     expect(out.game!.pilotOffField).toBeUndefined()
     expect(out.game!.openChain).toBeUndefined()
-    expect(out.game!.version).toBe(9)
+    expect(out.game!.version).toBe(10)
   })
 
   it('v9 drops a legacy plain-string armedMissionIds list instead of guessing its owning aircraft', () => {
@@ -176,7 +176,7 @@ describe('migratePersistedState', () => {
     ;(persisted.game as any).armedMissionIds = ['m1', 'm2']
     const out = migratePersistedState(persisted, 8)
     expect(out.game!.armedMissions).toEqual([])
-    expect(out.game!.version).toBe(9)
+    expect(out.game!.version).toBe(10)
   })
 })
 
@@ -424,7 +424,7 @@ describe('migratePersistedState catalogue remap', () => {
     const out = migratePersistedState(legacySave('YBAS'), 2)
     // legacySave() builds a fleet aircraft with the removed specId 'c210'
     expect(out.game?.fleet[0].specId).toBe('bonanza')
-    expect(out.game?.version).toBe(9)
+    expect(out.game?.version).toBe(10)
     expect(() => getSpec(out.game!.fleet[0].specId)).not.toThrow()
   })
 
@@ -960,5 +960,125 @@ describe('always-on session actions (#20)', () => {
     expect(g.flightLogs[0].missionIds).toHaveLength(2)
     expect(g.flightLogs[0].missionIds).toEqual(expect.arrayContaining(['mAB', 'mAC']))
     expect(g.flightLogs[0].earnings).toBe(3000 + 4000 - maint)
+  })
+})
+
+describe('time-critical missions (#11)', () => {
+  afterEach(() => useGame.getState().resetGame())
+
+  // Bonanza (5 seats) at YBAS with an accepted time-critical mission to YTNK.
+  function tcGame(over: Partial<Mission> = {}) {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const ac = useGame.getState().game!.fleet[0]
+    const m = mission({ id: 'tc1', type: 'ORGAN_TRANSPORT', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 1, windowMinutes: 40, ...over })
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [m] } }))
+    return { ac, m }
+  }
+  const ARM_T = 1_000_000
+
+  it('armMissions stamps windowEndsAtT from arm time + window for a time-critical mission', () => {
+    const { ac } = tcGame()
+    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    const armed = useGame.getState().game!.armedMissions.find((r) => r.missionId === 'tc1')
+    expect(armed?.windowEndsAtT).toBe(ARM_T + 40 * 60_000)
+  })
+
+  it('stopAt within the window pays the reward (made it)', () => {
+    const { ac } = tcGame()
+    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    const before = useGame.getState().game!.balance
+    const res = useGame.getState().stopAt(ac.id, 'YTNK', ARM_T + 30 * 60_000) // 30 < 40 min
+    const g = useGame.getState().game!
+    expect(g.stats.missionsCompleted).toBe(1)
+    expect(g.stats.missionsFailed).toBe(0)
+    expect(g.balance).toBeGreaterThan(before)
+    expect(g.reputation).toBeGreaterThan(50)
+    expect(g.acceptedMissions).toHaveLength(0)
+    expect(g.armedMissions).toHaveLength(0)
+    expect(res.messages.some((msg) => msg.includes('complete'))).toBe(true)
+  })
+
+  it('stopAt after the window hard-fails: no reward, penalty, -7 rep, missionsFailed', () => {
+    const { m } = tcGame({ reward: 8000, penalty: 2000 })
+    const ac = useGame.getState().game!.fleet[0]
+    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    const before = useGame.getState().game!.balance
+    const res = useGame.getState().stopAt(ac.id, 'YTNK', ARM_T + 50 * 60_000) // 50 > 40 min
+    const g = useGame.getState().game!
+    expect(g.stats.missionsFailed).toBe(1)
+    expect(g.stats.missionsCompleted).toBe(0)
+    expect(g.reputation).toBe(50 - 7)
+    expect(g.balance).toBe(before - m.penalty) // penalty only, no reward posted
+    expect(g.ledger.some((l) => l.category === 'MISSION')).toBe(false)
+    expect(g.acceptedMissions).toHaveLength(0)
+    expect(g.armedMissions).toHaveLength(0)
+    expect(res.messages.some((msg) => msg.includes('Missed'))).toBe(true)
+  })
+
+  it('the honour flyMission path refuses a time-critical mission', () => {
+    const { ac, m } = tcGame()
+    const res = useGame.getState().flyMission({ missionId: m.id, aircraftId: ac.id, blockMinutes: 60, fuelLitres: 50, landings: 1 })
+    expect(res.ok).toBe(false)
+    expect(res.message).toMatch(/SimConnect/i)
+  })
+
+  it('commitLeg (ON_BLOCK route) settles a time-critical mission within the window', () => {
+    const { ac } = tcGame()
+    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    const before = useGame.getState().game!.balance
+    useGame.getState().commitLeg({
+      aircraftId: ac.id, atT: ARM_T + 30 * 60_000, leg: leg({ blockMinutes: 90 }),
+      simFuelL: 300, pos: { icao: 'YTNK' }, externalFuelL: 0, landings: 1, track: [], simTitle: 'T', simAtcModel: 'M',
+    })
+    const g = useGame.getState().game!
+    expect(g.stats.missionsCompleted).toBe(1)
+    expect(g.stats.missionsFailed).toBe(0)
+    expect(g.balance).toBeGreaterThan(before) // reward outweighs the per-leg maintenance
+    expect(g.acceptedMissions).toHaveLength(0)
+  })
+
+  it('commitLeg (ON_BLOCK route) hard-fails a time-critical mission past the window', () => {
+    const { ac } = tcGame({ reward: 8000, penalty: 2000 })
+    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    useGame.getState().commitLeg({
+      aircraftId: ac.id, atT: ARM_T + 50 * 60_000, leg: leg({ blockMinutes: 90 }),
+      simFuelL: 300, pos: { icao: 'YTNK' }, externalFuelL: 0, landings: 1, track: [], simTitle: 'T', simAtcModel: 'M',
+    })
+    const g = useGame.getState().game!
+    expect(g.stats.missionsFailed).toBe(1)
+    expect(g.stats.missionsCompleted).toBe(0)
+    expect(g.ledger.some((l) => l.category === 'MISSION')).toBe(false)
+    expect(g.acceptedMissions).toHaveLength(0)
+  })
+
+  it('advanceDay does not re-penalise a time-critical mission already failed at the stop', () => {
+    const { ac } = tcGame({ reward: 8000, penalty: 2000 })
+    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    useGame.getState().stopAt(ac.id, 'YTNK', ARM_T + 50 * 60_000) // missed
+    const failedBefore = useGame.getState().game!.stats.missionsFailed
+    useGame.getState().advanceDay()
+    expect(useGame.getState().game!.stats.missionsFailed).toBe(failedBefore)
+  })
+
+  it('fails OPEN when the window was never stamped (a plumbing gap must not punish the player)', () => {
+    const { ac } = tcGame()
+    useGame.getState().armMissions(ac.id, 'YBAS') // no atT → windowEndsAtT stays undefined
+    expect(useGame.getState().game!.armedMissions.find((r) => r.missionId === 'tc1')?.windowEndsAtT).toBeUndefined()
+    const before = useGame.getState().game!.balance
+    useGame.getState().stopAt(ac.id, 'YTNK', ARM_T + 999 * 60_000) // far past — but unjudgeable
+    const g = useGame.getState().game!
+    expect(g.stats.missionsCompleted).toBe(1) // benefit of the doubt
+    expect(g.stats.missionsFailed).toBe(0)
+    expect(g.balance).toBeGreaterThan(before)
+  })
+
+  it('finalizeChain reverts an armed time-critical mission to plain accepted (crash/disconnect recovery)', () => {
+    const { ac, m } = tcGame()
+    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    useGame.getState().beginChain(ac.id, 'T', 'M') // open a chain so finalizeChain has something to close
+    useGame.getState().finalizeChain()
+    const g = useGame.getState().game!
+    expect(g.armedMissions.some((r) => r.missionId === m.id)).toBe(false) // un-armed
+    expect(g.acceptedMissions.some((mm) => mm.id === m.id)).toBe(true) // still accepted, re-arms next session
   })
 })

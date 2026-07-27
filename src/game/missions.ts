@@ -1,6 +1,11 @@
 import { airportsInRegion, basesInRegion, getAirport } from '../data/airports'
 import { distanceNm } from './geo'
-import { computeReward } from './economy'
+import {
+  computeReward,
+  timeCriticalWindowMinutes,
+  TIME_CRITICAL_MAX_DISTANCE_NM,
+  TIME_CRITICAL_REWARD_MULT,
+} from './economy'
 import type { AircraftSpec, Airport, Mission, MissionType, Urgency } from './types'
 
 let seq = 0
@@ -70,19 +75,49 @@ const TYPE_CONFIG: TypeConfig[] = [
       'A scheduled immunisation clinic needs its team flown out and back.',
     ],
   },
+  {
+    type: 'ORGAN_TRANSPORT',
+    label: 'Organ transport',
+    seats: [0, 1],
+    weight: 1,
+    narratives: [
+      'A donor organ has been matched — it must reach the transplant team before it perishes.',
+      'A time-critical tissue transfer: a courier and an esky, and a clock that started at retrieval.',
+    ],
+  },
+  {
+    type: 'EMERGENCY_MEDEVAC',
+    label: 'Emergency medevac',
+    seats: [4, 6],
+    weight: 1,
+    narratives: [
+      'A critical patient must be stretchered out with a medical escort — every minute counts.',
+      'A remote-clinic emergency needs a fast evacuation with room for a stretcher and a medic.',
+    ],
+  },
 ]
 
-function weightedType(): TypeConfig {
-  const total = TYPE_CONFIG.reduce((s, c) => s + c.weight, 0)
+export const TIME_CRITICAL_TYPES: ReadonlySet<MissionType> = new Set(['ORGAN_TRANSPORT', 'EMERGENCY_MEDEVAC'])
+
+/** True for a mission that carries a live delivery countdown. */
+export function isTimeCritical(m: Mission): boolean {
+  return m.windowMinutes !== undefined
+}
+
+function weightedType(fleetSpecs: AircraftSpec[]): TypeConfig {
+  const maxSeats = maxSeatsForFleet(fleetSpecs)
+  const eligible = TYPE_CONFIG.filter((c) => c.seats[0] <= maxSeats)
+  const total = eligible.reduce((s, c) => s + c.weight, 0)
   let r = Math.random() * total
-  for (const c of TYPE_CONFIG) {
+  for (const c of eligible) {
     r -= c.weight
     if (r <= 0) return c
   }
-  return TYPE_CONFIG[0]
+  return eligible[0]
 }
 
 function rollUrgency(type: MissionType): Urgency {
+  if (type === 'ORGAN_TRANSPORT' || type === 'EMERGENCY_MEDEVAC') return 'EMERGENCY'
   if (type === 'MEDEVAC') return Math.random() < 0.6 ? 'EMERGENCY' : 'PRIORITY'
   if (type === 'DOCTOR_TRANSPORT') return Math.random() < 0.5 ? 'PRIORITY' : 'ROUTINE'
   if (type === 'SUPPLY_RUN') return Math.random() < 0.25 ? 'PRIORITY' : 'ROUTINE'
@@ -160,8 +195,10 @@ export function generateMission(
   fleetSpecs: AircraftSpec[] = [],
   regionId: string
 ): Mission {
-  const cfg = weightedType()
-  const maxDist = maxDistanceForFleet(fleetSpecs)
+  const cfg = weightedType(fleetSpecs)
+  const timeCritical = TIME_CRITICAL_TYPES.has(cfg.type)
+  const fleetMax = maxDistanceForFleet(fleetSpecs)
+  const maxDist = timeCritical ? Math.min(fleetMax, TIME_CRITICAL_MAX_DISTANCE_NM) : fleetMax
 
   // Origin favours bases; destination is any other airport in-region within range.
   const airports = airportsInRegion(regionId)
@@ -176,7 +213,7 @@ export function generateMission(
   const seats = randInt(lo, hi)
   const urgency = rollUrgency(cfg.type)
   const [dMin, dMax] = DEADLINE_DAYS[urgency]
-  const reward = computeReward(dist, seats, urgency, reputation)
+  const reward = computeReward(dist, seats, urgency, reputation, timeCritical ? TIME_CRITICAL_REWARD_MULT : 1)
 
   const repReward =
     urgency === 'EMERGENCY' ? randInt(3, 5) : urgency === 'PRIORITY' ? randInt(2, 3) : randInt(1, 2)
@@ -196,6 +233,7 @@ export function generateMission(
     postedDay: day,
     expiresDay: day + randInt(dMin, dMax),
     reputationReward: repReward,
+    windowMinutes: timeCritical ? timeCriticalWindowMinutes(Math.round(dist)) : undefined,
   }
 }
 

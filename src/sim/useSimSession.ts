@@ -86,7 +86,7 @@ function applyEffect(
       if (!state.aircraftId || !sample) break
       store.beginChain(state.aircraftId, sample.title, sample.atcModel)
       if (e.icao) {
-        const { messages } = store.armMissions(state.aircraftId, e.icao)
+        const { messages } = store.armMissions(state.aircraftId, e.icao, sample.t)
         messages.forEach(notify)
       }
       // D13: the pre-flight duty warnings lived in the removed modals — warn at
@@ -103,7 +103,7 @@ function applyEffect(
     }
     case 'STOP_AT': {
       if (!state.aircraftId) break
-      const { messages } = store.stopAt(state.aircraftId, e.icao)
+      const { messages } = store.stopAt(state.aircraftId, e.icao, sample.t)
       messages.forEach(notify)
       break
     }
@@ -111,6 +111,7 @@ function applyEffect(
       if (!state.aircraftId) break
       const { messages } = store.commitLeg({
         aircraftId: state.aircraftId,
+        atT: sample.t,
         leg: e.leg,
         simFuelL: e.simFuelL,
         pos: e.pos,

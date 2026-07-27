@@ -17,10 +17,11 @@ It's a desktop app (Electron) built on a Vite + React + TypeScript core.
 ## The gameplay loop
 
 1. **Take a call-out** from the mission board — medevacs, doctor transports,
-   patient transfers, supply runs and clinic flights between real,
-   region-specific airstrips. Each has a distance, seat requirement, urgency,
-   reward and a deadline. Accepting a mission that would breach your duty-time
-   limits (see below) warns you first.
+   patient transfers, supply runs and clinic flights, plus time-critical organ
+   transports and emergency medevacs (see below), between real, region-specific
+   airstrips. Each has a distance, seat requirement, urgency, reward and a
+   deadline. Accepting a mission that would breach your duty-time limits (see
+   below) warns you first.
 2. **Fly it yourself** in your simulator of choice. With SimConnect connected,
    the flight books itself — the mission arms at off-block and completes when
    you land at the destination (even a running turnaround at an intermediate
@@ -74,6 +75,16 @@ better-paying work.
   with its track on a map. Not connected, or flying on Mac/Linux, X-Plane,
   DCS, etc.? The honour-system manual report works everywhere — the game
   pre-fills sensible suggestions from distance and the aircraft's performance.
+- **Time-critical missions.** Organ transports and emergency medevacs run
+  against a live clock. The countdown starts when you land and park at the
+  pickup airstrip and stops when you park at the destination — deliver in time
+  and the reward and reputation are yours; miss the window and the cargo is
+  lost (no reward, a penalty and a reputation hit). While the flight is under
+  way the dashboard shows an **active mission window** — a map with your live
+  position and route, the destination and the time remaining. They book
+  themselves through always-on SimConnect tracking, so they're flyable only in
+  the Windows desktop app with MSFS connected; emergency medevacs also need a
+  larger cabin (Bonanza-class or bigger).
 - **Duty-time limits.** Duty (block time + 30 min per stop) is tracked across
   a rolling 1/7/14/28-day window against real aviation-style caps (10 h / 60 h
   / 110 h / 190 h). The dashboard shows your running totals, accepting a

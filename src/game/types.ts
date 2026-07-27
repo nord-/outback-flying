@@ -58,6 +58,8 @@ export type MissionType =
   | 'PATIENT_TRANSFER'
   | 'SUPPLY_RUN'
   | 'CLINIC_FLIGHT'
+  | 'ORGAN_TRANSPORT'
+  | 'EMERGENCY_MEDEVAC'
 
 export type Urgency = 'ROUTINE' | 'PRIORITY' | 'EMERGENCY'
 
@@ -76,6 +78,7 @@ export interface Mission {
   postedDay: number
   expiresDay: number // last day the mission can be completed
   reputationReward: number
+  windowMinutes?: number // present only for time-critical types; countdown length in minutes
 }
 
 export type LedgerCategory =
@@ -196,6 +199,10 @@ export interface OpenChain {
 export interface ArmedMission {
   missionId: string
   aircraftId: string
+  // Time-critical only: wall-clock (sim sample `t`, epoch ms) by which the
+  // aircraft must be parked at the destination, stamped when the mission arms
+  // at its origin. Absent for ordinary missions.
+  windowEndsAtT?: number
 }
 
 export interface GameState {

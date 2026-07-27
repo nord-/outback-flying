@@ -6,6 +6,21 @@ export const URGENCY_MULT: Record<Urgency, number> = {
   EMERGENCY: 1.8,
 }
 
+export const TIME_CRITICAL_REF_KTS = 140
+export const TIME_CRITICAL_GROUND_ALLOWANCE_MIN = 25
+export const TIME_CRITICAL_MAX_DISTANCE_NM = 150
+export const TIME_CRITICAL_REWARD_MULT = 1.3
+export const EMERGENCY_MEDEVAC_MIN_SEATS = 4
+export const TIME_CRITICAL_MIN_WINDOW_MIN = 30
+
+/** Countdown length (minutes) for a time-critical leg: flight budget at a
+ *  reference cruise plus a fixed ground allowance, floored so tiny legs still
+ *  leave room to load and taxi. */
+export function timeCriticalWindowMinutes(distanceNm: number): number {
+  const budget = Math.ceil((distanceNm / TIME_CRITICAL_REF_KTS) * 60) + TIME_CRITICAL_GROUND_ALLOWANCE_MIN
+  return Math.max(TIME_CRITICAL_MIN_WINDOW_MIN, budget)
+}
+
 /** Suggested block time (minutes) for a leg, allowing for climb/descent/taxi. */
 export function suggestedBlockMinutes(distanceNm: number, cruiseKts: number): number {
   const cruiseHours = distanceNm / cruiseKts
@@ -46,14 +61,15 @@ export function computeReward(
   distanceNm: number,
   seatsRequired: number,
   urgency: Urgency,
-  reputation: number
+  reputation: number,
+  extraMult = 1
 ): number {
   const base = 1800
   const perNm = 9.5
   const perSeat = 220
   const raw = (base + distanceNm * perNm + seatsRequired * perSeat) * URGENCY_MULT[urgency]
   const repBonus = 1 + (reputation / 100) * 0.25
-  return Math.round((raw * repBonus) / 10) * 10
+  return Math.round((raw * repBonus * extraMult) / 10) * 10
 }
 
 /** Estimated profit of flying a mission with a given aircraft, for the UI. */

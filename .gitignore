@@ -7,3 +7,4 @@ release/
 
 # Local Claude Code tooling (worktrees, agents, settings) — never commit
 .claude/
+.superpowers/
