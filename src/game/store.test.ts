@@ -1,8 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { migratePersistedState, useGame, getHydrationError } from './store'
 import { getSpec } from '../data/aircraft'
-import { airportsInRegion } from '../data/airports'
-import { maintenanceCost, refuelCost } from './economy'
+import { airportsInRegion, getAirport } from '../data/airports'
+import { maintenanceCost, refuelCost, conditionLoss } from './economy'
+import { landingWear } from './fields'
 import type { GameState, OwnedAircraft, Mission, FlightLeg } from './types'
 
 const mission = (over: Partial<Mission> = {}): Mission => ({
@@ -960,6 +961,114 @@ describe('always-on session actions (#20)', () => {
     expect(g.flightLogs[0].missionIds).toHaveLength(2)
     expect(g.flightLogs[0].missionIds).toEqual(expect.arrayContaining(['mAB', 'mAC']))
     expect(g.flightLogs[0].earnings).toBe(3000 + 4000 - maint)
+  })
+})
+
+describe('landing wear', () => {
+  afterEach(() => useGame.getState().resetGame())
+
+  // YABF (Aberfoyle) is a 660 m dirt strip — margin 1.043 for a bonanza,
+  // giving landingWear(YABF, bonanza) = 0.36. Unlike a sealed hub (0 wear
+  // regardless), this makes the assertion below fail if the store change
+  // is ever reverted (#5 fix round 1).
+  it('flyMission charges landing wear on top of the time-based loss', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const g0 = useGame.getState().game!
+    const ac = g0.fleet[0]
+    const m = mission({ fromIcao: ac.locationIcao, toIcao: 'YABF', distanceNm: 200, seatsRequired: 1 })
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [m] } }))
+
+    useGame.getState().flyMission({
+      missionId: m.id,
+      aircraftId: ac.id,
+      blockMinutes: 120,
+      fuelLitres: 100,
+      landings: 1,
+    })
+
+    const spec = getSpec('bonanza')
+    const expected = 100 - conditionLoss(120) - landingWear(getAirport('YABF'), spec)
+    expect(useGame.getState().game!.fleet[0].condition).toBeCloseTo(expected, 2)
+  })
+
+  it('repositionAircraft charges landing wear at the destination', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const ac = useGame.getState().game!.fleet[0]
+
+    useGame.getState().repositionAircraft(ac.id, 'YABF', 90, 80)
+
+    const expected = 100 - conditionLoss(90) - landingWear(getAirport('YABF'), getSpec('bonanza'))
+    expect(useGame.getState().game!.fleet[0].condition).toBeCloseTo(expected, 2)
+  })
+
+  it('commitLeg charges landing wear when it parks at a catalogued field', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const ac = useGame.getState().game!.fleet[0]
+
+    useGame.getState().commitLeg({
+      aircraftId: ac.id,
+      simTitle: 'Bonanza',
+      simAtcModel: 'BE36',
+      pos: { icao: 'YABF' },
+      leg: leg({ toIcao: 'YABF', blockMinutes: 90 }),
+      landings: 1,
+      track: [],
+      externalFuelL: 0,
+      simFuelL: 200,
+    })
+
+    const expected = 100 - conditionLoss(90) - landingWear(getAirport('YABF'), getSpec('bonanza'))
+    expect(useGame.getState().game!.fleet[0].condition).toBeCloseTo(expected, 2)
+  })
+
+  it('commitLeg charges no landing wear when parking off-field', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const ac = useGame.getState().game!.fleet[0]
+
+    // Same physical spot as YABF (Aberfoyle) and the same aircraft/leg as
+    // the "parks at a catalogued field" test above — landingWear(YABF,
+    // bonanza) is 0.36, not 0, so this pair genuinely discriminates: an
+    // off-field shutdown (pos carries lat/lon, no icao) must charge only
+    // the time-based loss, while reporting the identical arrival as
+    // `pos: { icao: 'YABF' }` would charge wear on top (B10).
+    useGame.getState().commitLeg({
+      aircraftId: ac.id,
+      simTitle: 'Bonanza',
+      simAtcModel: 'BE36',
+      pos: { lat: -21.671, lon: 145.266 },
+      leg: leg({ toIcao: null, blockMinutes: 90 }),
+      landings: 1,
+      track: [],
+      externalFuelL: 0,
+      simFuelL: 200,
+    })
+
+    // Only the time-based loss — no runway data exists off-field (B10).
+    expect(useGame.getState().game!.fleet[0].condition).toBeCloseTo(100 - conditionLoss(90), 2)
+  })
+
+  it('never drives condition below zero', () => {
+    // b200 is not a STARTER_OPTION, so makeInitialState would silently fall
+    // back to DEFAULT_STARTER ('c172'). Inject the fleet directly instead.
+    //
+    // condition: 2.0 is deliberate, not arbitrary: conditionLoss(90) alone
+    // is 1.35, leaving 0.65 — NOT clamped — if landing wear were skipped.
+    // Only landingWear(YABF, b200) = 2.33 added on top drives the result
+    // negative and into the clamp. A lower starting value (e.g. 0.1) would
+    // already clamp from conditionLoss alone and could not tell an
+    // implemented wear charge apart from a missing one (#5 fix round 1).
+    useGame.getState().newGame('Test Air', 'c172')
+    useGame.setState((s) => ({
+      game: {
+        ...s.game!,
+        fleet: [{ ...s.game!.fleet[0], specId: 'b200', condition: 2.0, fuelL: 1000 }],
+      },
+    }))
+    const ac = useGame.getState().game!.fleet[0]
+
+    useGame.getState().repositionAircraft(ac.id, 'YABF', 90, 80)
+
+    expect(useGame.getState().game!.fleet[0].condition).toBe(0)
   })
 })
 

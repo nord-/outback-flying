@@ -1,4 +1,4 @@
-import type { GameState, GeoPos, Mission, Urgency } from './types'
+import type { GameState, GeoPos, Mission, Urgency, FieldType } from './types'
 import { airportsInRegion, getAirport } from '../data/airports'
 
 export interface MapPoint {
@@ -6,6 +6,7 @@ export interface MapPoint {
   name: string
   lat: number
   lon: number
+  type: FieldType | null // null = not a catalogued field (off-field position)
 }
 
 export interface MapAircraft {
@@ -33,17 +34,17 @@ export interface MapView {
 
 function toPoint(icao: string): MapPoint {
   const a = getAirport(icao)
-  return { icao: a.icao, name: a.name, lat: a.lat, lon: a.lon }
+  return { icao: a.icao, name: a.name, lat: a.lat, lon: a.lon, type: a.type }
 }
 
 function offPoint(pos: GeoPos): MapPoint {
-  return { icao: '', name: 'Off-field', lat: pos.lat, lon: pos.lon }
+  return { icao: '', name: 'Off-field', lat: pos.lat, lon: pos.lon, type: null }
 }
 
 export function deriveMapView(game: GameState): MapView {
   const pilot = game.pilotOffField ? offPoint(game.pilotOffField) : toPoint(game.pilotLocationIcao)
   return {
-    airports: airportsInRegion(game.regionId).map((a) => ({ icao: a.icao, name: a.name, lat: a.lat, lon: a.lon })),
+    airports: airportsInRegion(game.regionId).map((a) => ({ icao: a.icao, name: a.name, lat: a.lat, lon: a.lon, type: a.type })),
     homeBase: toPoint(game.homeBaseIcao),
     pilot,
     aircraft: game.fleet.map((a) => ({

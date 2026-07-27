@@ -62,6 +62,13 @@ better-paying work.
   a bush strip or open ground away from any catalogued field, which it holds
   until you fly or ferry it out. If the next job departs elsewhere, you fly a
   (non-paying) ferry leg first.
+- **Fields come in three tiers.** Hubs are the big sealed airports where missions
+  originate and aircraft are bought; regional fields serve the towns in between;
+  and **bush strips** are the short, unsealed station and community fields that
+  most of the flying doctor's work actually reaches. Most strips sell no fuel at
+  all, so you plan the return leg into the tank before you go. Nothing stops you
+  putting a King Air into a 700 m dirt strip — the app shows you the runway
+  figures, warns you, and lets you decide. The airframe will send the bill.
 - **SimConnect integration (Windows desktop app) — always-on tracking.**
   Connect to a running MSFS 2020/2024 session and the game continuously tracks
   the aircraft it matches to your fleet (by your pilot's location and type,
@@ -193,6 +200,15 @@ components only render state and dispatch actions through the Zustand store
 - Hiring pilots so you can run several aircraft in parallel
 - Save export/import and multiple save slots
 - Weather, night ops and seasonal demand
+
+## Data sources
+
+Runway length, surface and lighting mostly come from the [OurAirports](https://ourairports.com/data/)
+public-domain dataset. East African airstrips' runway length and surface instead derive from
+[OpenStreetMap](https://www.openstreetmap.org/) and its contributors, used under the
+[ODbL](https://opendatacommons.org/licenses/odbl/) (© OpenStreetMap contributors). A small number
+of other fields were hand-filled from other published sources where neither dataset had usable
+data; each is noted in a comment in `src/data/airports.ts`.
 
 ## License
 

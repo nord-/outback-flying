@@ -3,6 +3,10 @@ import type { AircraftSpec } from '../game/types'
 // Aircraft roughly modelled on real types used across Australian outback GA
 // and Royal Flying Doctor Service-style operations. Numbers are gameplay
 // approximations, not certified performance figures.
+//
+// `minRunwayM` is a practical minimum with reserve baked in, not a POH ground
+// roll: the game models neither temperature nor density altitude, so a literal
+// ground roll would read misleadingly optimistic (see #5 design spec, §3.2).
 export const AIRCRAFT_SPECS: AircraftSpec[] = [
   {
     id: 'c152',
@@ -11,6 +15,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     seats: 2,
     cruiseKts: 105,
     rangeNm: 415,
+    minRunwayM: 350,
     fuelType: 'AVGAS',
     fuelCapacityL: 98,
     burnLph: 22,
@@ -26,6 +31,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     seats: 3,
     cruiseKts: 120,
     rangeNm: 640,
+    minRunwayM: 400,
     fuelType: 'AVGAS',
     fuelCapacityL: 200,
     burnLph: 32,
@@ -41,6 +47,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     seats: 2,
     cruiseKts: 130,
     rangeNm: 750,
+    minRunwayM: 150,
     fuelType: 'AVGAS',
     fuelCapacityL: 190,
     burnLph: 38,
@@ -56,6 +63,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     seats: 5,
     cruiseKts: 170,
     rangeNm: 900,
+    minRunwayM: 550,
     fuelType: 'AVGAS',
     fuelCapacityL: 400,
     burnLph: 60,
@@ -71,6 +79,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     seats: 6,
     cruiseKts: 200,
     rangeNm: 1000,
+    minRunwayM: 650,
     fuelType: 'AVGAS',
     fuelCapacityL: 700,
     burnLph: 130,
@@ -86,6 +95,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     seats: 9,
     cruiseKts: 120,
     rangeNm: 690,
+    minRunwayM: 250,
     fuelType: 'JETA',
     fuelCapacityL: 640,
     burnLph: 180,
@@ -101,6 +111,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     seats: 9,
     cruiseKts: 170,
     rangeNm: 1000,
+    minRunwayM: 400,
     fuelType: 'JETA',
     fuelCapacityL: 1130,
     burnLph: 210,
@@ -116,6 +127,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     seats: 9,
     cruiseKts: 175,
     rangeNm: 1000,
+    minRunwayM: 500,
     fuelType: 'JETA',
     fuelCapacityL: 1250,
     burnLph: 210,
@@ -131,6 +143,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     seats: 8,
     cruiseKts: 290,
     rangeNm: 1800,
+    minRunwayM: 750,
     fuelType: 'JETA',
     fuelCapacityL: 1650,
     burnLph: 380,
@@ -146,6 +159,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     seats: 9,
     cruiseKts: 280,
     rangeNm: 1800,
+    minRunwayM: 700,
     fuelType: 'JETA',
     fuelCapacityL: 1520,
     burnLph: 300,

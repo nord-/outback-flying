@@ -1,5 +1,9 @@
 export type FuelType = 'AVGAS' | 'JETA'
 
+export type FieldType = 'hub' | 'regional' | 'strip'
+
+export type Surface = 'sealed' | 'gravel' | 'dirt' | 'grass' | 'sand'
+
 export interface Airport {
   icao: string
   name: string
@@ -7,7 +11,10 @@ export interface Airport {
   region: string // id of the world region this airport belongs to
   lat: number
   lon: number
-  isBase: boolean // major hub where missions tend to originate
+  type: FieldType // game role: where missions originate, where the market is
+  runwayM: number // longest non-closed runway, rounded to 10 m
+  surface: Surface // surface of that longest runway
+  lighted: boolean // runway lighting — shown as information, no mechanic
   fuelTypes: FuelType[] // which fuel types the field offers; [] = no fuel
   fuelPriceMult: number // multiplier over the region's market fuel price (1.0 = hub)
 }
@@ -25,6 +32,7 @@ export interface AircraftSpec {
   seats: number // passenger/patient seats (excl. crew)
   cruiseKts: number // cruise true airspeed
   rangeNm: number // practical still-air range
+  minRunwayM: number // practical runway requirement on sealed, dry ground, reserve included
   fuelType: FuelType
   fuelCapacityL: number
   burnLph: number // cruise fuel burn, litres/hour

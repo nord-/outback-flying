@@ -4,7 +4,7 @@ import { getAirport, classifyFuel } from '../data/airports'
 import { getSpec } from '../data/aircraft'
 import { estimateProfit, URGENCY_MULT } from '../game/economy'
 import { missionTypeLabel, isTimeCritical } from '../game/missions'
-import { money, URGENCY_LABEL, FUEL_LABEL } from '../game/format'
+import { money, URGENCY_LABEL, FUEL_LABEL, fieldSummary } from '../game/format'
 import { bearingDeg, compass } from '../game/geo'
 import { estimateDutyMinutes, wouldBeOver, isOverAnyLimit } from '../game/duty'
 import type { Mission } from '../game/types'
@@ -95,6 +95,7 @@ function MissionCard({
         {bestProfit !== null && (
           <span>Est. net <b style={{ color: bestProfit >= 0 ? 'var(--green)' : 'var(--red)' }}>{money(bestProfit)}</b></span>
         )}
+        <span className="muted">{to.icao} {fieldSummary(to)}</span>
       </div>
       {fuelWarnings.length > 0 && (
         <div className="fuel-warn tiny" style={{ color: 'var(--amber)', marginTop: 6 }}>
