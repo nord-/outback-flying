@@ -30,9 +30,10 @@ import {
   refuelCost,
 } from './economy'
 
-const SAVE_VERSION = 9 // v7 = fuel tanks; v8 = always-on sim tracking (#20); v9 = per-aircraft armed missions (#22 review)
+const SAVE_VERSION = 10 // v7 = fuel tanks; v8 = always-on sim tracking (#20); v9 = per-aircraft armed missions (#22 review); v10 = time-critical missions (#11), no migration
 const SAVE_KEY = 'outback-flying-save'
 const MISSION_BOARD_TARGET = 7
+const TIME_CRITICAL_FAIL_REP = -7 // reputation hit when a time-critical delivery misses its window (#11)
 
 // Hydration failure signal. persist's onFinishHydration never fires when
 // rehydration throws (corrupt stored JSON, a hostile persisted shape), so the
@@ -229,6 +230,7 @@ export interface FlyOutcome {
 // otherwise a raw coordinate — the aircraft parked off-field (D9).
 export interface CommitLegInput {
   aircraftId: string
+  atT?: number // sim sample time (epoch ms) of this on-block — for time-critical settlement (#11)
   leg: FlightLeg
   simFuelL: number
   pos: { icao: string } | GeoPos
@@ -260,8 +262,8 @@ interface Store {
   // sim session (#20)
   beginChain: (aircraftId: string, simTitle: string, simAtcModel: string) => void
   commitLeg: (input: CommitLegInput) => { messages: string[] }
-  stopAt: (aircraftId: string, icao: string) => { messages: string[] }
-  armMissions: (aircraftId: string, icao: string) => { messages: string[] }
+  stopAt: (aircraftId: string, icao: string, atT?: number) => { messages: string[] }
+  armMissions: (aircraftId: string, icao: string, atT?: number) => { messages: string[] }
   finalizeChain: () => void
 }
 
@@ -312,7 +314,7 @@ function applyDuty(
 /** Arm every accepted mission departing `icao` that the aircraft can seat (D8).
  *  Armed missions are tagged with `aircraftId` so settlement only pays out to
  *  the aircraft that actually carried the mission (#22 review). */
-function armInto(g: GameState, aircraftId: string, icao: string): string[] {
+function armInto(g: GameState, aircraftId: string, icao: string, atT?: number): string[] {
   const ac = g.fleet.find((a) => a.id === aircraftId)
   if (!ac) return []
   const spec = getSpec(ac.specId)
@@ -323,8 +325,16 @@ function armInto(g: GameState, aircraftId: string, icao: string): string[] {
       messages.push(`"${m.title}" needs ${m.seatsRequired} seats — ${spec.name} has ${spec.seats}. Not underway.`)
       continue
     }
-    g.armedMissions.push({ missionId: m.id, aircraftId })
-    messages.push(`Mission underway: ${m.title} (${m.fromIcao} → ${m.toIcao}).`)
+    // Time-critical (#11): stamp the deadline the moment the mission arms at
+    // its origin — the countdown includes the ground time before departure.
+    const windowEndsAtT =
+      m.windowMinutes != null && atT != null ? atT + m.windowMinutes * 60_000 : undefined
+    g.armedMissions.push({ missionId: m.id, aircraftId, ...(windowEndsAtT != null ? { windowEndsAtT } : {}) })
+    messages.push(
+      m.windowMinutes != null
+        ? `⏱ Time-critical underway: ${m.title} — ${m.windowMinutes} min to reach ${m.toIcao}.`
+        : `Mission underway: ${m.title} (${m.fromIcao} → ${m.toIcao}).`
+    )
   }
   return messages
 }
@@ -337,51 +347,80 @@ function settleStop(
   g: GameState,
   operator: OperatorProfile | null,
   aircraftId: string,
-  icao: string
+  icao: string,
+  atT?: number
 ): { messages: string[]; operator: OperatorProfile | null } {
   const messages: string[] = []
   const done = g.acceptedMissions.filter(
     (m) => g.armedMissions.some((r) => r.missionId === m.id && r.aircraftId === aircraftId) && m.toIcao === icao
   )
   for (const mission of done) {
+    // Read the time-critical deadline BEFORE the armed record is removed below.
+    const armed = g.armedMissions.find((r) => r.missionId === mission.id && r.aircraftId === aircraftId)
+    const isTimeCritical = mission.windowMinutes != null
+    // Fail OPEN: if the window can't be judged (no deadline stamped, or no stop
+    // time supplied — a plumbing gap, not the player's fault), give the benefit
+    // of the doubt rather than hard-fail a delivery that may well have been on time.
+    const canJudgeWindow = armed?.windowEndsAtT != null && atT != null
+    const madeWindow = !canJudgeWindow || (atT as number) <= (armed!.windowEndsAtT as number)
     const onTime = g.day <= mission.expiresDay
-    post(g, 'MISSION', mission.title, mission.reward)
-    let net = mission.reward
-    // Per-leg duty accounting means the 50%-crossing tier can't be computed at
-    // stop time; being over a limit when completing withholds everything (see
-    // plan Global Constraints behavioral note).
-    if (isOverAnyLimit(g.dutyLog, g.day)) {
-      post(g, 'PENALTY', 'Duty-time violation — 100% reward withheld', -mission.reward)
-      g.stats.totalEarned -= mission.reward
-      net = 0
-    }
-    if (onTime) g.reputation = clamp(g.reputation + mission.reputationReward, 0, 100)
-    else {
-      post(g, 'PENALTY', `Late completion — ${mission.title}`, -mission.penalty)
-      g.reputation = clamp(g.reputation - 2, 0, 100)
-      net -= mission.penalty
-    }
-    g.stats.missionsCompleted += 1
+
+    // Settle: remove from accepted + armed regardless of outcome.
     g.acceptedMissions = g.acceptedMissions.filter((m) => m.id !== mission.id)
     g.armedMissions = g.armedMissions.filter((r) => r.missionId !== mission.id)
-    const xp = xpForMission(mission)
-    if (operator) operator = { ...operator, xp: operator.xp + xp }
+
+    let net: number
+    if (isTimeCritical && (!madeWindow || !onTime)) {
+      // Time-critical hard failure (#11): the perishable cargo is lost — no
+      // reward, a penalty and a larger reputation hit than an ordinary late job.
+      post(g, 'PENALTY', `Failed time-critical — ${mission.title}`, -mission.penalty)
+      g.reputation = clamp(g.reputation + TIME_CRITICAL_FAIL_REP, 0, 100)
+      g.stats.missionsFailed += 1
+      net = -mission.penalty
+      messages.push(`⏱ Missed the window — ${mission.title}: cargo lost, penalty applied.`)
+    } else {
+      post(g, 'MISSION', mission.title, mission.reward)
+      net = mission.reward
+      // Per-leg duty accounting means the 50%-crossing tier can't be computed at
+      // stop time; being over a limit when completing withholds everything (see
+      // plan Global Constraints behavioral note).
+      if (isOverAnyLimit(g.dutyLog, g.day)) {
+        post(g, 'PENALTY', 'Duty-time violation — 100% reward withheld', -mission.reward)
+        g.stats.totalEarned -= mission.reward
+        net = 0
+      }
+      if (onTime) g.reputation = clamp(g.reputation + mission.reputationReward, 0, 100)
+      else {
+        post(g, 'PENALTY', `Late completion — ${mission.title}`, -mission.penalty)
+        g.reputation = clamp(g.reputation - 2, 0, 100)
+        net -= mission.penalty
+      }
+      g.stats.missionsCompleted += 1
+      const xp = xpForMission(mission)
+      if (operator) operator = { ...operator, xp: operator.xp + xp }
+      messages.push(
+        onTime
+          ? `Mission complete: ${mission.title}. +$${mission.reward.toLocaleString()}, +${xp} XP.`
+          : `Completed late: ${mission.title} — penalty applied.`
+      )
+    }
     if (g.openChain) {
       g.openChain.earnings += net
       g.openChain.missionIds.push(mission.id)
     }
-    messages.push(
-      onTime
-        ? `Mission complete: ${mission.title}. +$${mission.reward.toLocaleString()}, +${xp} XP.`
-        : `Completed late: ${mission.title} — penalty applied.`
-    )
   }
-  messages.push(...armInto(g, aircraftId, icao))
+  messages.push(...armInto(g, aircraftId, icao, atT))
   return { messages, operator }
 }
 
 /** Close the open chain into a FlightLog + summary. Mutates g. */
 function finalizeChainInto(g: GameState): void {
+  // Time-critical (#11): a chain ending (disconnect, day rollover, aircraft
+  // swap) reverts any armed time-critical missions to plain accepted, so an
+  // interrupted or crashed session degrades to "not yet flown" rather than
+  // burning a persisted wall-clock deadline the player can't recover from —
+  // they re-arm fresh next time the aircraft parks at the origin.
+  g.armedMissions = g.armedMissions.filter((r) => r.windowEndsAtT == null)
   const chain = g.openChain
   if (!chain || chain.legs.length === 0) {
     delete g.openChain
@@ -495,6 +534,11 @@ export const useGame = create<Store>()(
 
         const mission = g.acceptedMissions.find((m) => m.id === report.missionId)
         if (!mission) return { ok: false, message: 'Mission not found.' }
+        // Time-critical missions (#11) are settled live by the always-on sim
+        // session against their countdown — the honour path can't judge the
+        // window, so it must not complete them.
+        if (mission.windowMinutes != null)
+          return { ok: false, message: 'Time-critical missions book themselves via SimConnect — fly it in the simulator.' }
         const ac = g.fleet.find((a) => a.id === report.aircraftId)
         if (!ac) return { ok: false, message: 'Aircraft not found.' }
         if (ac.offField)
@@ -677,16 +721,16 @@ export const useGame = create<Store>()(
       // session effects; the reducer in game/simSession.ts stays pure. All
       // return { messages } for useSimSession to toast — never notify here.
 
-      armMissions: (aircraftId, icao) => {
+      armMissions: (aircraftId, icao, atT) => {
         const s = get()
         if (!s.game) return { messages: [] }
         const g = structuredClone(s.game)
-        const messages = armInto(g, aircraftId, icao)
+        const messages = armInto(g, aircraftId, icao, atT)
         set({ game: g })
         return { messages }
       },
 
-      stopAt: (aircraftId, icao) => {
+      stopAt: (aircraftId, icao, atT) => {
         const s = get()
         if (!s.game) return { messages: [] }
         const g = structuredClone(s.game)
@@ -695,7 +739,7 @@ export const useGame = create<Store>()(
         // missed off-block hasn't. No sim identity is available here, so seed
         // an empty title — commitLeg's ensureOpenChain call backfills it later.
         ensureOpenChain(g, aircraftId, '', '')
-        const { messages, operator } = settleStop(g, s.operator, aircraftId, icao)
+        const { messages, operator } = settleStop(g, s.operator, aircraftId, icao, atT)
         set({ game: g, operator })
         return { messages }
       },
@@ -725,7 +769,7 @@ export const useGame = create<Store>()(
 
         // 1. Complete-then-arm at a catalogued field (idempotent with STOP_AT).
         if ('icao' in input.pos) {
-          const r = settleStop(g, operator, input.aircraftId, input.pos.icao)
+          const r = settleStop(g, operator, input.aircraftId, input.pos.icao, input.atT)
           messages.push(...r.messages)
           operator = r.operator
         }
@@ -834,7 +878,15 @@ export const useGame = create<Store>()(
       version: SAVE_VERSION,
       // IndexedDB-backed (falls back to localStorage); see idbStorage.ts.
       storage: createJSONStorage(() => persistentStorage),
-      partialize: (s) => ({ game: s.game, operator: s.operator }),
+      // Time-critical arms carry a wall-clock deadline (windowEndsAtT) that is
+      // meaningless across a reload — strip them from the persisted copy so a
+      // crash/close reverts them to plain accepted (they re-arm next session).
+      partialize: (s) => ({
+        game: s.game
+          ? { ...s.game, armedMissions: s.game.armedMissions.filter((r) => r.windowEndsAtT == null) }
+          : s.game,
+        operator: s.operator,
+      }),
       migrate: (persisted, version) => migratePersistedState(persisted, version),
       onRehydrateStorage: () => (_state, error) => {
         if (error) {

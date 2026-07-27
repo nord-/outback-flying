@@ -8,6 +8,7 @@ import { GALLONS_TO_LITRES } from '../game/flightlog'
 import { useSessionState } from '../sim/useSimSession'
 import { useSim } from '../sim/useSim'
 import { OperationsMap } from './OperationsMap'
+import { ActiveMissionWindow } from './ActiveMissionWindow'
 
 export function Dashboard() {
   const game = useGame((s) => s.game)!
@@ -42,6 +43,7 @@ export function Dashboard() {
           </div>
         </div>
       )}
+      <ActiveMissionWindow />
       <div className="grid cols-3 mb">
         <div className="card kpi">
           <span className="k-label">Cash balance</span>

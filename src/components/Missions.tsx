@@ -3,13 +3,14 @@ import { useGame } from '../game/store'
 import { getAirport, classifyFuel } from '../data/airports'
 import { getSpec } from '../data/aircraft'
 import { estimateProfit, URGENCY_MULT } from '../game/economy'
-import { missionTypeLabel } from '../game/missions'
+import { missionTypeLabel, isTimeCritical } from '../game/missions'
 import { money, URGENCY_LABEL, FUEL_LABEL } from '../game/format'
 import { bearingDeg, compass } from '../game/geo'
 import { estimateDutyMinutes, wouldBeOver, isOverAnyLimit } from '../game/duty'
 import type { Mission } from '../game/types'
 import { FlyModal } from './FlyModal'
 import { useNav } from './ui'
+import { useSim } from '../sim/useSim'
 
 function deadlineText(m: Mission, day: number): { text: string; warn: boolean } {
   const left = m.expiresDay - day
@@ -25,12 +26,14 @@ function MissionCard({
   onFly,
   highlighted,
   cardRef,
+  simAvailable,
 }: {
   m: Mission
   accepted: boolean
   onFly: (m: Mission) => void
   highlighted: boolean
   cardRef: (el: HTMLDivElement | null) => void
+  simAvailable: boolean
 }) {
   const game = useGame((s) => s.game)!
   const accept = useGame((s) => s.acceptMission)
@@ -77,6 +80,7 @@ function MissionCard({
       <div className="head">
         <span className={`badge ${m.urgency.toLowerCase()}`}>{URGENCY_LABEL[m.urgency]}</span>
         <span className="badge type">{missionTypeLabel(m.type)}</span>
+        {isTimeCritical(m) && <span className="badge emergency">⏱ Time-critical</span>}
         <span className="pill" style={dl.warn ? { color: 'var(--red)', borderColor: 'rgba(224,90,90,0.4)' } : {}}>
           {dl.text}
         </span>
@@ -100,7 +104,13 @@ function MissionCard({
       <div className="actions">
         {accepted ? (
           <>
-            <button className="btn primary sm" onClick={() => onFly(m)}>Fly this leg</button>
+            {isTimeCritical(m) ? (
+              <span className="pill" title="Time-critical: books itself when you fly it in the simulator with SimConnect connected.">
+                ⏱ Books via SimConnect
+              </span>
+            ) : (
+              <button className="btn primary sm" onClick={() => onFly(m)}>Fly this leg</button>
+            )}
             <button className="btn danger sm" onClick={() => abandon(m.id)}>Abandon</button>
           </>
         ) : confirmingAccept ? (
@@ -113,6 +123,10 @@ function MissionCard({
               <button className="btn ghost sm" onClick={() => setConfirmingAccept(false)}>Cancel</button>
             </div>
           </div>
+        ) : isTimeCritical(m) && !simAvailable ? (
+          <span className="pill" title="Time-critical missions can only be flown in the desktop app with SimConnect — accepting one here would be a guaranteed penalty.">
+            ⏱ Requires SimConnect
+          </span>
         ) : (
           <button
             className="btn primary sm"
@@ -129,6 +143,10 @@ function MissionCard({
 export function Missions() {
   const game = useGame((s) => s.game)!
   const [flying, setFlying] = useState<Mission | null>(null)
+  // One subscription for the whole board (not one per card): the SimConnect
+  // bridge is only present in the desktop build, so this gates accepting a
+  // time-critical mission that couldn't otherwise be flown (#11).
+  const { available: simAvailable } = useSim()
 
   const { selectedMissionId, setSelectedMissionId } = useNav()
   const [highlightId, setHighlightId] = useState<string | null>(null)
@@ -186,6 +204,7 @@ export function Missions() {
               onFly={setFlying}
               highlighted={highlightId === m.id}
               cardRef={registerCard(m.id)}
+              simAvailable={simAvailable}
             />
           ))}
         </div>
@@ -204,6 +223,7 @@ export function Missions() {
               onFly={setFlying}
               highlighted={highlightId === m.id}
               cardRef={registerCard(m.id)}
+              simAvailable={simAvailable}
             />
           ))}
         </div>
