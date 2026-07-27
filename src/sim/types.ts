@@ -14,6 +14,8 @@ export interface SimSample {
   fuelGal: number // total fuel quantity, gallons
   title: string // full sim aircraft title (livery/add-on string)
   atcModel: string // ATC model — the clean family name, preferred for matching
+  fuelCapacityGal: number // total fuel capacity, gallons
+  enginesOn: boolean // any of GENERAL ENG COMBUSTION:1..4 — false once all engines are shut down
 }
 
 /** Renderer-facing connection status. 'unavailable' is web-build only. */
@@ -46,6 +48,12 @@ export interface OutbackSim {
   connect: (options?: SimConnectOptions) => Promise<SimConnectResult>
   disconnect: () => Promise<{ ok: boolean }>
   getStatus: () => Promise<{ status: SimStatusEvent['status'] }>
+  /** Write the loaded aircraft's fuel so its total matches `litres` (issue #20),
+   *  via per-tank LEVEL fractions (FSUIPC's proven SimConnect write path), then
+   *  read back to verify the sim took it. `ok: false` with a message when the
+   *  sim isn't connected or the aircraft's fuel system ignored the write
+   *  (modern [FUEL_SYSTEM] aircraft); `actualL` is the sim's post-write total. */
+  setFuel: (litres: number) => Promise<{ ok: boolean; message?: string; actualL?: number }>
   /** Subscribe to live samples; returns an unsubscribe function. */
   onSample: (cb: (sample: SimSample) => void) => () => void
   /** Subscribe to status changes; returns an unsubscribe function. */

@@ -16,12 +16,48 @@ const {
   SimConnectDataType,
   SimConnectPeriod,
   SimConnectConstants,
+  RawBuffer,
 } = simconnect
 
 const APP_NAME = 'Outback Flying'
 const DEF_ID = 1
 const REQ_ID = 1
+// Separate data definitions for the fuel WRITE path (issue #20). Kept apart
+// from DEF_ID/REQ_ID so the streaming/recording path is never disturbed.
+const DEF_FUEL_INFO = 2 // total quantity + capacity (read once around a write)
+const DEF_FUEL_SET = 3 // per-tank LEVEL fractions (the values we write)
+const REQ_FUEL_INFO = 2
 const DEFAULT_TIMEOUT_MS = 8000
+const GALLONS_TO_LITRES = 3.785411784 // mirror of the src/game/flightlog.ts constant (separate runtime)
+
+// Fuel writing follows FSUIPC's proven MSFS practice: the per-tank LEVEL
+// SimVars ("Percent Over 100", 0..1 of that tank's capacity) are the ones
+// SimConnect can actually set — FSUIPC's offset status marks the LEVEL
+// offsets "Ok-SimC" (written via SimConnect) while QUANTITY/CAPACITY writes
+// are "No". Writing the SAME fraction to every tank distributes fuel in
+// proportion to each tank's capacity by construction, so hitting a target
+// TOTAL needs only `fraction = target / FUEL TOTAL CAPACITY` — no per-tank
+// capacity bookkeeping. Tanks the loaded aircraft doesn't have simply have
+// zero capacity, so their write is a no-op. Modern [FUEL_SYSTEM] aircraft
+// ignore these legacy vars entirely — the read-back in setFuel() detects
+// that and reports it honestly instead of pretending the sync worked.
+const FUEL_TANK_LEVEL = [
+  'FUEL TANK CENTER LEVEL',
+  'FUEL TANK CENTER2 LEVEL',
+  'FUEL TANK CENTER3 LEVEL',
+  'FUEL TANK LEFT MAIN LEVEL',
+  'FUEL TANK LEFT AUX LEVEL',
+  'FUEL TANK LEFT TIP LEVEL',
+  'FUEL TANK RIGHT MAIN LEVEL',
+  'FUEL TANK RIGHT AUX LEVEL',
+  'FUEL TANK RIGHT TIP LEVEL',
+  'FUEL TANK EXTERNAL1 LEVEL',
+  'FUEL TANK EXTERNAL2 LEVEL',
+]
+const FUEL_INFO_VARS = [
+  { name: 'FUEL TOTAL QUANTITY', unit: 'gallons', type: SimConnectDataType.FLOAT64 },
+  { name: 'FUEL TOTAL CAPACITY', unit: 'gallons', type: SimConnectDataType.FLOAT64 },
+]
 
 // SimVars to stream. Order here MUST match the read order in readSample().
 const VARS = [
@@ -34,11 +70,19 @@ const VARS = [
   { name: 'FUEL TOTAL QUANTITY', unit: 'gallons', type: SimConnectDataType.FLOAT64 },
   { name: 'TITLE', unit: null, type: SimConnectDataType.STRING256 },
   { name: 'ATC MODEL', unit: null, type: SimConnectDataType.STRING256 },
+  { name: 'FUEL TOTAL CAPACITY', unit: 'gallons', type: SimConnectDataType.FLOAT64 },
+  // Engine state (issue #20 always-on tracking). Generic across piston /
+  // turboprop / jet; indexes beyond the aircraft's engine count read as off.
+  // Appended LAST — order here MUST match the read order in readSample().
+  { name: 'GENERAL ENG COMBUSTION:1', unit: 'bool', type: SimConnectDataType.INT32 },
+  { name: 'GENERAL ENG COMBUSTION:2', unit: 'bool', type: SimConnectDataType.INT32 },
+  { name: 'GENERAL ENG COMBUSTION:3', unit: 'bool', type: SimConnectDataType.INT32 },
+  { name: 'GENERAL ENG COMBUSTION:4', unit: 'bool', type: SimConnectDataType.INT32 },
 ]
 
 /** Read one sample from a RawBuffer in the same order VARS were defined. */
 function readSample(buffer) {
-  return {
+  const base = {
     lat: buffer.readFloat64(),
     lon: buffer.readFloat64(),
     headingTrue: buffer.readFloat64(),
@@ -48,7 +92,13 @@ function readSample(buffer) {
     fuelGal: buffer.readFloat64(),
     title: buffer.readString256(),
     atcModel: buffer.readString256(),
+    fuelCapacityGal: buffer.readFloat64(),
   }
+  const eng1 = buffer.readInt32() !== 0
+  const eng2 = buffer.readInt32() !== 0
+  const eng3 = buffer.readInt32() !== 0
+  const eng4 = buffer.readInt32() !== 0
+  return { ...base, enginesOn: eng1 || eng2 || eng3 || eng4 }
 }
 
 /** Map a friendly protocol name to a node-simconnect Protocol value. */
@@ -157,6 +207,11 @@ export function createSimBridge({ onSample, onStatus }) {
       handle = h
 
       for (const v of VARS) handle.addToDataDefinition(DEF_ID, v.name, v.unit, v.type)
+      // Fuel sync definitions (issue #20). Defined per-connection alongside the
+      // stream; a fresh handle re-adds them, matching how DEF_ID is set up.
+      for (const v of FUEL_INFO_VARS) handle.addToDataDefinition(DEF_FUEL_INFO, v.name, v.unit, v.type)
+      for (const n of FUEL_TANK_LEVEL)
+        handle.addToDataDefinition(DEF_FUEL_SET, n, 'percent over 100', SimConnectDataType.FLOAT64)
       handle.requestDataOnSimObject(
         REQ_ID,
         DEF_ID,
@@ -214,9 +269,88 @@ export function createSimBridge({ onSample, onStatus }) {
     return { ok: true }
   }
 
+  // Read the total fuel quantity + capacity once (SimConnectPeriod.ONCE).
+  // Uses a temporary listener filtered on REQ_FUEL_INFO; the streaming handler
+  // ignores this request id, so the two never interfere.
+  function requestFuelInfoOnce() {
+    return new Promise((resolve, reject) => {
+      if (!handle) return reject(new Error('not connected'))
+      const h = handle
+      const timer = setTimeout(() => {
+        try {
+          h.removeListener('simObjectData', onData)
+        } catch {
+          /* ignore */
+        }
+        reject(new Error('fuel info read timed out'))
+      }, 3000)
+      function onData(recv) {
+        if (recv.requestID !== REQ_FUEL_INFO) return
+        clearTimeout(timer)
+        try {
+          h.removeListener('simObjectData', onData)
+        } catch {
+          /* ignore */
+        }
+        try {
+          resolve({ quantityGal: recv.data.readFloat64(), capacityGal: recv.data.readFloat64() })
+        } catch (err) {
+          reject(err)
+        }
+      }
+      h.on('simObjectData', onData)
+      h.requestDataOnSimObject(REQ_FUEL_INFO, DEF_FUEL_INFO, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.ONCE)
+    })
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+  // Write the loaded aircraft's fuel so its TOTAL matches `litres` (the game's
+  // authoritative tank), by setting the same LEVEL fraction on every tank —
+  // FSUIPC's proven SimConnect write path (see FUEL_TANK_LEVEL note above).
+  // Read-back verifies the sim actually took it: modern [FUEL_SYSTEM] aircraft
+  // ignore legacy LEVEL writes, and pretending otherwise would let the game
+  // and sim silently drift apart. Never throws into the caller and never
+  // touches the streaming path; a failed sync leaves the already-committed
+  // game state untouched and returns { ok:false, message } for a soft notice.
+  async function setFuel(litres) {
+    if (!handle || status !== 'connected') return { ok: false, message: 'Sim not connected.' }
+    const targetGal = Math.max(0, Number(litres) / GALLONS_TO_LITRES)
+    if (!Number.isFinite(targetGal)) return { ok: false, message: 'Invalid fuel amount.' }
+    try {
+      const info = await requestFuelInfoOnce()
+      if (!(info.capacityGal > 0)) return { ok: false, message: 'Aircraft reports no fuel capacity.' }
+      const fraction = Math.min(1, targetGal / info.capacityGal)
+      const buf = new RawBuffer(FUEL_TANK_LEVEL.length * 8)
+      for (let i = 0; i < FUEL_TANK_LEVEL.length; i++) buf.writeFloat64(fraction)
+      handle.setDataOnSimObject(DEF_FUEL_SET, SimConnectConstants.OBJECT_ID_USER, {
+        buffer: buf,
+        arrayCount: 0,
+        tagged: false,
+      })
+      // Read back after a beat: a modern-fuel-system aircraft ignores the
+      // write, which shows up as an unchanged total. 2% of capacity (min
+      // half a gallon) absorbs float noise and unusable-fuel rounding.
+      await sleep(500)
+      const after = await requestFuelInfoOnce()
+      const tolGal = Math.max(0.5, info.capacityGal * 0.02)
+      if (Math.abs(after.quantityGal - targetGal) > tolGal) {
+        return {
+          ok: false,
+          message: "The aircraft's fuel system did not accept the external refuel — set fuel in the sim manually.",
+          actualL: after.quantityGal * GALLONS_TO_LITRES,
+        }
+      }
+      return { ok: true, actualL: after.quantityGal * GALLONS_TO_LITRES }
+    } catch (err) {
+      return { ok: false, message: err && err.message ? err.message : String(err) }
+    }
+  }
+
   return {
     connect,
     disconnect,
     getStatus: () => ({ status }),
+    setFuel,
   }
 }

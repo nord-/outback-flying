@@ -32,12 +32,13 @@ function game(over: Partial<GameState> = {}): GameState {
     reputation: 50,
     day: 1,
     fuel: { AVGAS: 2.9, JETA: 2.4 },
-    fleet: [{ id: 'ac1', specId: 'c172', registration: 'VH-ABC', hoursFlown: 0, condition: 100, locationIcao: 'YBAS' }],
+    fleet: [{ id: 'ac1', specId: 'c172', registration: 'VH-ABC', hoursFlown: 0, condition: 100, locationIcao: 'YBAS', fuelL: 200 }],
     availableMissions: [],
     acceptedMissions: [],
     ledger: [],
     flightLogs: [],
     dutyLog: [],
+    armedMissions: [],
     stats: { missionsCompleted: 0, missionsFailed: 0, hoursFlown: 0, totalEarned: 0 },
     ...over,
   }
@@ -76,6 +77,16 @@ describe('deriveMapView', () => {
       from: expect.objectContaining({ icao: 'YBHI' }), // pilotLocationIcao
       to: expect.objectContaining({ icao: 'YBMA' }), // mission.fromIcao
     })
+  })
+
+  it('places an off-field aircraft (and the pilot with it) at its coordinates', () => {
+    const g = game()
+    g.fleet[0].offField = { lat: -20.5, lon: 133.5 }
+    g.pilotOffField = { lat: -20.5, lon: 133.5 }
+    const view = deriveMapView(g)
+    expect(view.aircraft[0].point.lat).toBe(-20.5)
+    expect(view.aircraft[0].point.icao).toBe('') // off-field: no icao
+    expect(view.pilot.lat).toBe(-20.5)
   })
 })
 

@@ -2,7 +2,9 @@
 // persists in the renderer, so we expose only lightweight metadata plus the
 // SimConnect bridge (issue #9): the renderer drives the sim through
 // `window.outback.sim` and never touches node-simconnect or ipcRenderer directly.
-import { contextBridge, ipcRenderer } from 'electron'
+// CommonJS on purpose: sandboxed preload scripts (Electron's default) cannot
+// use ESM, and package.json's "type": "module" would make a .js file ESM.
+const { contextBridge, ipcRenderer } = require('electron')
 
 // Wrap an ipcRenderer channel as a subscribe(cb) that returns an unsubscribe fn.
 // The raw IpcRendererEvent is dropped so the renderer only sees the payload.
@@ -19,6 +21,7 @@ contextBridge.exposeInMainWorld('outback', {
     connect: (options) => ipcRenderer.invoke('sim:connect', options),
     disconnect: () => ipcRenderer.invoke('sim:disconnect'),
     getStatus: () => ipcRenderer.invoke('sim:status'),
+    setFuel: (litres) => ipcRenderer.invoke('sim:setFuel', litres),
     onSample: (cb) => subscribe('sim:sample', cb),
     onStatus: (cb) => subscribe('sim:status', cb),
   },

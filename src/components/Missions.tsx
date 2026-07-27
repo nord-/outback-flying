@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useGame } from '../game/store'
-import { getAirport } from '../data/airports'
+import { getAirport, classifyFuel } from '../data/airports'
 import { getSpec } from '../data/aircraft'
 import { estimateProfit, URGENCY_MULT } from '../game/economy'
 import { missionTypeLabel } from '../game/missions'
-import { money, URGENCY_LABEL } from '../game/format'
+import { money, URGENCY_LABEL, FUEL_LABEL } from '../game/format'
 import { bearingDeg, compass } from '../game/geo'
 import { estimateDutyMinutes, wouldBeOver, isOverAnyLimit } from '../game/duty'
 import type { Mission } from '../game/types'
@@ -46,8 +46,21 @@ function MissionCard({
     .map((a) => getSpec(a.specId))
     .filter((s) => s.seats >= m.seatsRequired && s.rangeNm >= m.distanceNm)
   const bestProfit = capable.length
-    ? Math.max(...capable.map((s) => estimateProfit(m, s, game.fuel[s.fuelType])))
+    ? Math.max(...capable.map((s) => estimateProfit(m, s, game.fuel[s.fuelType] * getAirport(m.fromIcao).fuelPriceMult)))
     : null
+
+  // Fuel-availability marker: dormant today (every field offers both fuel
+  // types), but lights up once no-fuel/limited-fuel strips exist (#5).
+  const fleetFuelTypes = Array.from(new Set(game.fleet.map((a) => getSpec(a.specId).fuelType)))
+  const fuelWarnings = fleetFuelTypes.flatMap((ft) => {
+    const notes: string[] = []
+    for (const [label, icao] of [['origin', m.fromIcao], ['destination', m.toIcao]] as const) {
+      const status = classifyFuel(getAirport(icao).fuelTypes, ft)
+      if (status === 'no-fuel') notes.push(`⚠ No fuel at ${label} (${icao}) — plan return fuel.`)
+      else if (status === 'wrong-type') notes.push(`⚠ Only other fuel at ${label} (${icao}) — no ${FUEL_LABEL[ft]}.`)
+    }
+    return notes
+  })
 
   // Best-case (fastest capable owned aircraft) duty estimate. Warn only if even
   // the best case would breach a limit — the player cannot avoid it.
@@ -79,6 +92,11 @@ function MissionCard({
           <span>Est. net <b style={{ color: bestProfit >= 0 ? 'var(--green)' : 'var(--red)' }}>{money(bestProfit)}</b></span>
         )}
       </div>
+      {fuelWarnings.length > 0 && (
+        <div className="fuel-warn tiny" style={{ color: 'var(--amber)', marginTop: 6 }}>
+          {fuelWarnings.map((w, i) => <div key={i}>{w}</div>)}
+        </div>
+      )}
       <div className="actions">
         {accepted ? (
           <>

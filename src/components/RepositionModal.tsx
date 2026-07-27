@@ -5,12 +5,11 @@ import { getSpec } from '../data/aircraft'
 import { airportsInRegion, getAirport } from '../data/airports'
 import { distanceNm } from '../game/geo'
 import {
-  fuelCost,
   maintenanceCost,
   suggestedBlockMinutes,
   suggestedFuelLitres,
 } from '../game/economy'
-import { money, price, FUEL_LABEL } from '../game/format'
+import { money, FUEL_LABEL } from '../game/format'
 import { computeDutyMinutes } from '../game/flightlog'
 import { wouldBeOver, isOverAnyLimit } from '../game/duty'
 import type { OwnedAircraft } from '../game/types'
@@ -20,16 +19,19 @@ export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft
   const reposition = useGame((s) => s.repositionAircraft)
   const { notify } = useUI()
   const spec = getSpec(aircraft.specId)
-  const from = getAirport(aircraft.locationIcao)
+  const fromPos = aircraft.offField ?? getAirport(aircraft.locationIcao)
+  const fromLabel = aircraft.offField
+    ? `off-field (${aircraft.offField.lat.toFixed(2)}, ${aircraft.offField.lon.toFixed(2)})`
+    : `${getAirport(aircraft.locationIcao).icao} ${getAirport(aircraft.locationIcao).name}`
 
   const destinations = useMemo(
     () =>
       airportsInRegion(game.regionId)
-        .filter((a) => a.icao !== aircraft.locationIcao)
-        .map((a) => ({ a, dist: Math.round(distanceNm(from, a)) }))
+        .filter((a) => aircraft.offField || a.icao !== aircraft.locationIcao)
+        .map((a) => ({ a, dist: Math.round(distanceNm(fromPos, a)) }))
         .filter((d) => d.dist <= spec.rangeNm)
         .sort((x, y) => x.dist - y.dist),
-    [game.regionId, aircraft.locationIcao, from, spec.rangeNm]
+    [game.regionId, aircraft.locationIcao, aircraft.offField, fromPos, spec.rangeNm]
   )
 
   const [toIcao, setToIcao] = useState(destinations[0]?.a.icao ?? '')
@@ -48,8 +50,7 @@ export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft
     setFuel(String(sFuel))
   }
 
-  const fuelPrice = game.fuel[spec.fuelType]
-  const cost = fuelCost(Number(fuel) || 0, fuelPrice) + maintenanceCost(Number(block) || 0, spec.maintPerHour)
+  const cost = maintenanceCost(Number(block) || 0, spec.maintPerHour)
   const ferryDutyEst = computeDutyMinutes(Number(block) || 0, 1)
   const dutyAlreadyOver = isOverAnyLimit(game.dutyLog, game.day)
   const dutyWouldExceed = wouldBeOver(game.dutyLog, game.day, ferryDutyEst)
@@ -71,7 +72,7 @@ export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft
         </div>
         <div className="m-body">
           <p className="tiny muted" style={{ margin: 0 }}>
-            Ferry {spec.name} from <b>{from.icao} {from.name}</b> with no fare — you pay fuel and
+            Ferry {spec.name} from <b>{fromLabel}</b> with no fare — you pay fuel and
             maintenance only. Fly it in your sim, then report the leg.
           </p>
           <div className="field">
@@ -93,7 +94,7 @@ export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft
             <div className="field">
               <label>Fuel used (litres, {FUEL_LABEL[spec.fuelType]})</label>
               <input type="number" min={0} value={fuel} onChange={(e) => setFuel(e.target.value)} />
-              <span className="hint">Suggested {sFuel} L @ {price(fuelPrice)}/L</span>
+              <span className="hint">Suggested {sFuel} L · tank {aircraft.fuelL.toFixed(0)} L</span>
             </div>
           </div>
           <div className="summary-box">

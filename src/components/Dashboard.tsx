@@ -3,7 +3,10 @@ import { getSpec } from '../data/aircraft'
 import { getAirport } from '../data/airports'
 import { money, price, FUEL_LABEL } from '../game/format'
 import { rankFor, rankProgress } from '../game/progression'
-import { dutyStatus } from '../game/duty'
+import { dutyStatus, isOverAnyLimit } from '../game/duty'
+import { GALLONS_TO_LITRES } from '../game/flightlog'
+import { useSessionState } from '../sim/useSimSession'
+import { useSim } from '../sim/useSim'
 import { OperationsMap } from './OperationsMap'
 
 export function Dashboard() {
@@ -16,10 +19,29 @@ export function Dashboard() {
   const progress = rankProgress(xp)
   const duty = dutyStatus(game.dutyLog, game.day)
   const DUTY_LABEL: Record<number, string> = { 1: 'Today', 7: '7 days', 14: '14 days', 28: '28 days' }
+  const session = useSessionState()
+  const { sample } = useSim()
+  const liveAc = game.fleet.find((a) => a.id === session.aircraftId)
 
   return (
     <div>
       <h2 className="page-title">Operations overview</h2>
+      {session.phase === 'SIM_ACTIVE' && sample && liveAc && (
+        <div className="card mb">
+          <div className="spread">
+            <h3 style={{ margin: 0 }}>✈ Live flight — {liveAc.registration}</h3>
+            {isOverAnyLimit(game.dutyLog, game.day) && (
+              <span className="badge warn">Duty limit exceeded — rewards forfeited</span>
+            )}
+          </div>
+          <div className="facts mission mt">
+            <span>{sample.onGround ? 'GND' : 'AIR'} · <b>{sample.groundKts.toFixed(0)}</b> kt · <b>{sample.altFt.toFixed(0)}</b> ft</span>
+            <span>Fuel <b>{(sample.fuelGal * GALLONS_TO_LITRES).toFixed(0)}</b> L (live)</span>
+            <span>Legs <b>{session.recorder?.legs.length ?? 0}</b> · Landings <b>{session.recorder?.landings ?? 0}</b></span>
+            <span>Underway <b>{game.armedMissions.length}</b> mission{game.armedMissions.length === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+      )}
       <div className="grid cols-3 mb">
         <div className="card kpi">
           <span className="k-label">Cash balance</span>

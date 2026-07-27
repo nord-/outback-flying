@@ -25,6 +25,7 @@ const simBridge = createSimBridge({
 ipcMain.handle('sim:connect', (_event, options) => simBridge.connect(options))
 ipcMain.handle('sim:disconnect', () => simBridge.disconnect())
 ipcMain.handle('sim:status', () => simBridge.getStatus())
+ipcMain.handle('sim:setFuel', (_event, litres) => simBridge.setFuel(litres))
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -35,7 +36,7 @@ function createWindow() {
     backgroundColor: '#0e1420',
     title: 'Outback Flying',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
