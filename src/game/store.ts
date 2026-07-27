@@ -35,6 +35,10 @@ const SAVE_VERSION = 10 // v7 = fuel tanks; v8 = always-on sim tracking (#20); v
 const SAVE_KEY = 'outback-flying-save'
 const MISSION_BOARD_TARGET = 7
 const TIME_CRITICAL_FAIL_REP = -7 // reputation hit when a time-critical delivery misses its window (#11)
+// A new operator is an unknown rookie: no reputation to trade on, and none to
+// lose either — every rep change is clamped to 0..100, so early mistakes are
+// free (#23).
+const STARTING_REPUTATION = 0
 
 // Hydration failure signal. persist's onFinishHydration never fires when
 // rehydration throws (corrupt stored JSON, a hostile persisted shape), so the
@@ -183,11 +187,17 @@ function makeInitialState(companyName: string, startSpecId: string, regionId: st
     homeBaseIcao: home,
     pilotLocationIcao: home,
     balance: 0,
-    reputation: 50,
+    reputation: STARTING_REPUTATION,
     day: 1,
     fuel: { ...region.startingFuel },
     fleet: [starter],
-    availableMissions: generateMissions(MISSION_BOARD_TARGET, 1, 50, [getSpec(starter.specId)], regionId),
+    availableMissions: generateMissions(
+      MISSION_BOARD_TARGET,
+      1,
+      STARTING_REPUTATION,
+      [getSpec(starter.specId)],
+      regionId
+    ),
     acceptedMissions: [],
     ledger: [],
     flightLogs: [],
