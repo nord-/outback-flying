@@ -212,6 +212,23 @@ describe('newGame starter selection', () => {
     expect(g.stats.totalEarned).toBe(0)
   })
 
+  it('starts a rookie at zero reputation (#23)', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    expect(useGame.getState().game!.reputation).toBe(0)
+  })
+
+  it('never drops reputation below zero — a rookie mistake costs nothing (#23)', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const ac = useGame.getState().game!.fleet[0]
+    const m = mission({ id: 'tc0', type: 'ORGAN_TRANSPORT', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 1, windowMinutes: 40 })
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [m] } }))
+    useGame.getState().armMissions(ac.id, 'YBAS', 1_000_000)
+    useGame.getState().stopAt(ac.id, 'YTNK', 1_000_000 + 50 * 60_000) // blows the window: -7 rep
+    const g = useGame.getState().game!
+    expect(g.stats.missionsFailed).toBe(1) // proves the -7 branch ran, not a no-op
+    expect(g.reputation).toBe(0)
+  })
+
   it('falls back to the Cessna 172 for an invalid starter id', () => {
     useGame.getState().newGame('Test Air', 'nope')
     const g = useGame.getState().game!
@@ -595,7 +612,7 @@ describe('always-on session actions (#20)', () => {
     expect(g1.armedMissions.some((r) => r.missionId === missionId)).toBe(false)
     expect(g1.balance).toBeGreaterThan(before)
     expect(g1.stats.missionsCompleted).toBe(1)
-    expect(g1.reputation).toBeGreaterThan(50)
+    expect(g1.reputation).toBeGreaterThan(g0.reputation)
     expect(useGame.getState().operator!.xp).toBeGreaterThan(opBefore)
     expect(res.messages.some((m) => m.includes('complete'))).toBe(true)
   })
@@ -987,12 +1004,13 @@ describe('time-critical missions (#11)', () => {
     const { ac } = tcGame()
     useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
     const before = useGame.getState().game!.balance
+    const repBefore = useGame.getState().game!.reputation
     const res = useGame.getState().stopAt(ac.id, 'YTNK', ARM_T + 30 * 60_000) // 30 < 40 min
     const g = useGame.getState().game!
     expect(g.stats.missionsCompleted).toBe(1)
     expect(g.stats.missionsFailed).toBe(0)
     expect(g.balance).toBeGreaterThan(before)
-    expect(g.reputation).toBeGreaterThan(50)
+    expect(g.reputation).toBeGreaterThan(repBefore)
     expect(g.acceptedMissions).toHaveLength(0)
     expect(g.armedMissions).toHaveLength(0)
     expect(res.messages.some((msg) => msg.includes('complete'))).toBe(true)
@@ -1000,6 +1018,8 @@ describe('time-critical missions (#11)', () => {
 
   it('stopAt after the window hard-fails: no reward, penalty, -7 rep, missionsFailed', () => {
     const { m } = tcGame({ reward: 8000, penalty: 2000 })
+    // Established operator, so the full -7 lands clear of the floor at 0 (#23).
+    useGame.setState((s) => ({ game: { ...s.game!, reputation: 50 } }))
     const ac = useGame.getState().game!.fleet[0]
     useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
     const before = useGame.getState().game!.balance
