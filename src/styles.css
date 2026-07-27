@@ -172,6 +172,7 @@ table.ledger tr:hover td { background: rgba(31,43,64,0.4); }
 .summary-box { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-size: 13px; }
 .summary-box .line { display: flex; justify-content: space-between; padding: 3px 0; }
 .summary-box .line.total { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 8px; font-weight: 700; }
+.field input[type='range'] { width: 100%; accent-color: var(--blue, #5aa9e0); }
 
 .notice { padding: 10px 14px; border-radius: 8px; font-size: 13px; }
 .notice.err { background: rgba(224,90,90,0.14); color: var(--red); border: 1px solid rgba(224,90,90,0.3); }

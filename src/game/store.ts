@@ -3,8 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import { persistentStorage } from './idbStorage'
 import { saveFlightLog } from './flightLogStorage'
 import { computeDutyMinutes } from './flightlog'
-import { penaltyFactor } from './duty'
-import type { DerivedFlight } from './flightlog'
+import { penaltyFactor, isOverAnyLimit } from './duty'
 import type {
   GameState,
   LedgerCategory,
@@ -14,18 +13,24 @@ import type {
   FlightLog,
   FlightLogSummary,
   DutyEntry,
+  GeoPos,
+  TrackPoint,
+  FlightLeg,
+  OpenChain,
+  ArmedMission,
 } from './types'
 import { getSpec, STARTER_OPTIONS, DEFAULT_STARTER } from '../data/aircraft'
 import { getRegion, tryGetRegion, DEFAULT_REGION } from '../data/regions'
+import { airportOffersFuel, getAirport } from '../data/airports'
 import { generateMissions } from './missions'
 import { xpForMission } from './progression'
 import {
   conditionLoss,
-  fuelCost,
   maintenanceCost,
+  refuelCost,
 } from './economy'
 
-const SAVE_VERSION = 6
+const SAVE_VERSION = 9 // v7 = fuel tanks; v8 = always-on sim tracking (#20); v9 = per-aircraft armed missions (#22 review)
 const SAVE_KEY = 'outback-flying-save'
 const MISSION_BOARD_TARGET = 7
 
@@ -77,7 +82,12 @@ export interface PersistedSave {
  *  - v3: remap removed aircraft spec ids
  *  - v4: add the region id and synthesise an operator profile
  *  - v5: default the flightLogs list
- *  - v6: seed the duty log from flight logs */
+ *  - v6: seed the duty log from flight logs
+ *  - v7: seed a full fuel tank for aircraft that don't have one
+ *  - v8: default the armed-mission list
+ *  - v9: armed missions gain an owning aircraftId; a legacy plain-string
+ *    list can't attribute one, so it's dropped (missions simply re-arm next
+ *    time their aircraft passes the departure field) */
 export function migratePersistedState(persisted: unknown, version: number): PersistedSave {
   const state = persisted as PersistedSave
   const g = state?.game
@@ -123,6 +133,27 @@ export function migratePersistedState(persisted: unknown, version: number): Pers
     )
   }
 
+  // Fuel as a resource (v7): any aircraft without a tank starts full. The
+  // undefined check keeps this idempotent and covers both v5 and v6 saves.
+  for (const ac of g.fleet ?? []) {
+    if (ac.fuelL === undefined) ac.fuelL = getSpec(ac.specId).fuelCapacityL
+  }
+
+  // Always-on sim tracking (v8) + per-aircraft armed missions (v9): the v8
+  // shape was a flat string[] with no aircraft attribution. There's no way to
+  // recover which aircraft armed each entry, so a legacy list is dropped
+  // rather than guessed — armInto re-arms correctly next time that aircraft
+  // is at the departure field. Off-field positions and the open chain are
+  // optional and correctly absent in older saves.
+  const legacyArmed = (g as unknown as { armedMissionIds?: unknown[] }).armedMissionIds
+  if (!g.armedMissions) {
+    g.armedMissions =
+      Array.isArray(legacyArmed) && legacyArmed.every((e) => typeof e === 'object' && e !== null)
+        ? (legacyArmed as ArmedMission[])
+        : []
+  }
+  delete (g as unknown as { armedMissionIds?: unknown[] }).armedMissionIds
+
   g.version = SAVE_VERSION
   return state
 }
@@ -141,6 +172,7 @@ function makeInitialState(companyName: string, startSpecId: string, regionId: st
     hoursFlown: 0,
     condition: 100,
     locationIcao: home,
+    fuelL: getSpec(option.specId).fuelCapacityL,
   }
   const g: GameState = {
     version: SAVE_VERSION,
@@ -158,6 +190,7 @@ function makeInitialState(companyName: string, startSpecId: string, regionId: st
     ledger: [],
     flightLogs: [],
     dutyLog: [],
+    armedMissions: [],
     stats: { missionsCompleted: 0, missionsFailed: 0, hoursFlown: 0, totalEarned: 0 },
   }
   post(
@@ -185,19 +218,25 @@ export interface FlyOutcome {
   ok: boolean
   message: string
   reward?: number
-  fuel?: number
   maintenance?: number
   net?: number
   onTime?: boolean
   dutyFactor?: number // 1 = no duty penalty, 0.5 = half reward, 0 = none
 }
 
-// A SimConnect-recorded flight ready to commit (issue #9, Phase 4). `missionId`
-// is absent for a free flight or reposition — no reward, cost only.
-export interface CommitFlightLogInput {
-  derived: DerivedFlight
+// A per-leg commit from the always-on sim session (issue #20). `pos` is a
+// catalogued field when the sim shut down within tolerance of an airport,
+// otherwise a raw coordinate — the aircraft parked off-field (D9).
+export interface CommitLegInput {
   aircraftId: string
-  missionId?: string
+  leg: FlightLeg
+  simFuelL: number
+  pos: { icao: string } | GeoPos
+  externalFuelL: number
+  landings: number
+  track: TrackPoint[]
+  simTitle: string
+  simAtcModel: string
 }
 
 interface Store {
@@ -211,13 +250,19 @@ interface Store {
   abandonMission: (missionId: string) => void
   flyMission: (report: FlyReport) => FlyOutcome
   repositionAircraft: (aircraftId: string, toIcao: string, blockMinutes: number, fuelLitres: number) => FlyOutcome
-  commitFlightLog: (input: CommitFlightLogInput) => FlyOutcome
   // fleet
   buyAircraft: (specId: string, baseIcao: string) => { ok: boolean; message: string }
   sellAircraft: (aircraftId: string) => void
   repairAircraft: (aircraftId: string) => void
+  refuel: (aircraftId: string, litres: number, maxCapacityL?: number) => { ok: boolean; message: string; cost?: number }
   // time
   advanceDay: () => void
+  // sim session (#20)
+  beginChain: (aircraftId: string, simTitle: string, simAtcModel: string) => void
+  commitLeg: (input: CommitLegInput) => { messages: string[] }
+  stopAt: (aircraftId: string, icao: string) => { messages: string[] }
+  armMissions: (aircraftId: string, icao: string) => { messages: string[] }
+  finalizeChain: () => void
 }
 
 /** Push a ledger entry and return the resulting balance. */
@@ -264,6 +309,146 @@ function applyDuty(
   return { factor, withheld }
 }
 
+/** Arm every accepted mission departing `icao` that the aircraft can seat (D8).
+ *  Armed missions are tagged with `aircraftId` so settlement only pays out to
+ *  the aircraft that actually carried the mission (#22 review). */
+function armInto(g: GameState, aircraftId: string, icao: string): string[] {
+  const ac = g.fleet.find((a) => a.id === aircraftId)
+  if (!ac) return []
+  const spec = getSpec(ac.specId)
+  const messages: string[] = []
+  for (const m of g.acceptedMissions) {
+    if (m.fromIcao !== icao || g.armedMissions.some((r) => r.missionId === m.id)) continue
+    if (spec.seats < m.seatsRequired) {
+      messages.push(`"${m.title}" needs ${m.seatsRequired} seats — ${spec.name} has ${spec.seats}. Not underway.`)
+      continue
+    }
+    g.armedMissions.push({ missionId: m.id, aircraftId })
+    messages.push(`Mission underway: ${m.title} (${m.fromIcao} → ${m.toIcao}).`)
+  }
+  return messages
+}
+
+/** Complete-then-arm at a full stop (D8). Mutates g; returns updated operator.
+ *  Only settles missions armed by THIS aircraft — a different aircraft merely
+ *  landing at the same destination can't collect a reward it didn't carry the
+ *  mission for (#22 review). */
+function settleStop(
+  g: GameState,
+  operator: OperatorProfile | null,
+  aircraftId: string,
+  icao: string
+): { messages: string[]; operator: OperatorProfile | null } {
+  const messages: string[] = []
+  const done = g.acceptedMissions.filter(
+    (m) => g.armedMissions.some((r) => r.missionId === m.id && r.aircraftId === aircraftId) && m.toIcao === icao
+  )
+  for (const mission of done) {
+    const onTime = g.day <= mission.expiresDay
+    post(g, 'MISSION', mission.title, mission.reward)
+    let net = mission.reward
+    // Per-leg duty accounting means the 50%-crossing tier can't be computed at
+    // stop time; being over a limit when completing withholds everything (see
+    // plan Global Constraints behavioral note).
+    if (isOverAnyLimit(g.dutyLog, g.day)) {
+      post(g, 'PENALTY', 'Duty-time violation — 100% reward withheld', -mission.reward)
+      g.stats.totalEarned -= mission.reward
+      net = 0
+    }
+    if (onTime) g.reputation = clamp(g.reputation + mission.reputationReward, 0, 100)
+    else {
+      post(g, 'PENALTY', `Late completion — ${mission.title}`, -mission.penalty)
+      g.reputation = clamp(g.reputation - 2, 0, 100)
+      net -= mission.penalty
+    }
+    g.stats.missionsCompleted += 1
+    g.acceptedMissions = g.acceptedMissions.filter((m) => m.id !== mission.id)
+    g.armedMissions = g.armedMissions.filter((r) => r.missionId !== mission.id)
+    const xp = xpForMission(mission)
+    if (operator) operator = { ...operator, xp: operator.xp + xp }
+    if (g.openChain) {
+      g.openChain.earnings += net
+      g.openChain.missionIds.push(mission.id)
+    }
+    messages.push(
+      onTime
+        ? `Mission complete: ${mission.title}. +$${mission.reward.toLocaleString()}, +${xp} XP.`
+        : `Completed late: ${mission.title} — penalty applied.`
+    )
+  }
+  messages.push(...armInto(g, aircraftId, icao))
+  return { messages, operator }
+}
+
+/** Close the open chain into a FlightLog + summary. Mutates g. */
+function finalizeChainInto(g: GameState): void {
+  const chain = g.openChain
+  if (!chain || chain.legs.length === 0) {
+    delete g.openChain
+    return
+  }
+  const sum = (f: (l: FlightLeg) => number) => +chain.legs.reduce((t, l) => t + f(l), 0).toFixed(2)
+  const intermediates = chain.legs
+    .slice(0, -1)
+    .map((l) => l.toIcao)
+    .filter((i): i is string => i !== null)
+  const summary: FlightLogSummary = {
+    id: uid('fl'),
+    day: chain.startDay,
+    missionId: chain.missionIds[0],
+    missionIds: chain.missionIds,
+    aircraftId: chain.aircraftId,
+    legs: chain.legs,
+    startIcao: chain.legs[0].fromIcao,
+    endIcao: chain.legs[chain.legs.length - 1].toIcao,
+    intermediates,
+    blockMinutes: sum((l) => l.blockMinutes),
+    flightMinutes: sum((l) => l.flightMinutes),
+    dutyMinutes: chain.dutyMinutes,
+    distanceNm: sum((l) => l.distanceNm),
+    fuelUsedL: sum((l) => l.fuelUsedL),
+    landings: chain.landings,
+    earnings: chain.earnings,
+  }
+  g.flightLogs.unshift(summary)
+  const full: FlightLog = {
+    ...summary,
+    simAircraftTitle: chain.simAircraftTitle,
+    simAtcModel: chain.simAtcModel,
+    track: chain.track,
+  }
+  saveFlightLog(full).catch((err) => console.warn('[flightlog] could not persist track', err))
+  delete g.openChain
+}
+
+/** Ensure a chain is open for `aircraftId` (D14 fix): finalizes a different
+ *  aircraft's open chain first, creates a fresh one if none is open, and
+ *  backfills empty title fields on an already-open chain for this aircraft
+ *  (covers stopAt's identity-less defensive open). Mutates g. Idempotent. */
+function ensureOpenChain(g: GameState, aircraftId: string, simTitle: string, simAtcModel: string): void {
+  if (g.openChain && g.openChain.aircraftId !== aircraftId) finalizeChainInto(g)
+  if (!g.openChain) {
+    const chain: OpenChain = {
+      aircraftId,
+      startDay: g.day,
+      simAircraftTitle: simTitle,
+      simAtcModel: simAtcModel,
+      legs: [],
+      landings: 0,
+      dutyMinutes: 0,
+      earnings: 0,
+      missionIds: [],
+      track: [],
+    }
+    g.openChain = chain
+    return
+  }
+  // Already open for this aircraft — backfill an empty title left by a
+  // defensive stopAt-side open (stopAt has no sim identity to seed it with).
+  if (!g.openChain.simAircraftTitle && simTitle) g.openChain.simAircraftTitle = simTitle
+  if (!g.openChain.simAtcModel && simAtcModel) g.openChain.simAtcModel = simAtcModel
+}
+
 export const useGame = create<Store>()(
   persist(
     (set, get) => ({
@@ -299,6 +484,7 @@ export const useGame = create<Store>()(
           post(g, 'PENALTY', `Abandoned "${m.title}"`, -m.penalty)
           g.reputation = clamp(g.reputation - 3, 0, 100)
           g.stats.missionsFailed += 1
+          g.armedMissions = g.armedMissions.filter((r) => r.missionId !== missionId)
           return { game: g }
         }),
 
@@ -311,6 +497,8 @@ export const useGame = create<Store>()(
         if (!mission) return { ok: false, message: 'Mission not found.' }
         const ac = g.fleet.find((a) => a.id === report.aircraftId)
         if (!ac) return { ok: false, message: 'Aircraft not found.' }
+        if (ac.offField)
+          return { ok: false, message: `${ac.registration} is parked off-field — recover it in the sim or ferry it out first.` }
         const spec = getSpec(ac.specId)
 
         if (ac.locationIcao !== mission.fromIcao)
@@ -323,19 +511,18 @@ export const useGame = create<Store>()(
         if (report.blockMinutes <= 0 || report.fuelLitres < 0)
           return { ok: false, message: 'Enter a valid block time and fuel figure.' }
 
-        const price = g.fuel[spec.fuelType]
-        const fuel = fuelCost(report.fuelLitres, price)
         const maint = maintenanceCost(report.blockMinutes, spec.maintPerHour)
         const onTime = g.day <= mission.expiresDay
+        const dry = report.fuelLitres > ac.fuelL
 
-        // Income and expenses.
+        // Income and expenses (fuel is pre-paid at refuel — not charged here).
         post(g, 'MISSION', `${mission.title}`, mission.reward)
-        post(g, 'FUEL', `Fuel — ${ac.registration} (${report.fuelLitres} L ${spec.fuelType})`, -fuel)
         post(g, 'MAINTENANCE', `Maintenance — ${ac.registration}`, -maint)
 
-        // Aircraft wear + relocation.
+        // Aircraft wear, fuel draw-down and relocation.
         ac.hoursFlown = +(ac.hoursFlown + report.blockMinutes / 60).toFixed(2)
         ac.condition = clamp(+(ac.condition - conditionLoss(report.blockMinutes)).toFixed(2), 0, 100)
+        ac.fuelL = Math.max(0, +(ac.fuelL - report.fuelLitres).toFixed(2))
         ac.locationIcao = mission.toIcao
         g.pilotLocationIcao = mission.toIcao
 
@@ -359,12 +546,12 @@ export const useGame = create<Store>()(
         const { factor: dutyFactor, withheld } = applyDuty(g, dutyMinutes, 'MISSION', mission.id, mission.reward)
 
         set({ game: g, operator })
-        const net = mission.reward - withheld - fuel - maint - (onTime ? 0 : mission.penalty)
+        const net = mission.reward - withheld - maint - (onTime ? 0 : mission.penalty)
+        const dryNote = dry ? ' Tank ran dry — a fuel stop was needed.' : ''
         return {
           ok: true,
           onTime,
           reward: mission.reward,
-          fuel,
           maintenance: maint,
           net,
           dutyFactor,
@@ -372,149 +559,8 @@ export const useGame = create<Store>()(
             (onTime
               ? `Mission complete. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
               : `Completed late — reputation and a penalty applied. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`) +
-            (withheld > 0 ? ` ⚠ Duty-time violation: ${dutyFactor === 0 ? '100%' : '50%'} of the reward withheld.` : ''),
-        }
-      },
-
-      // Commits a SimConnect-verified recording (issue #9, Phase 4) — the
-      // live-recording sibling of flyMission. `missionId` is optional: a free
-      // flight or reposition still gets logged and charged, just with no
-      // mission reward. Reuses the same economy rules (post(), conditionLoss)
-      // as flyMission/repositionAircraft so fuel/maintenance/wear stay
-      // consistent regardless of how the flight was reported.
-      commitFlightLog: (input) => {
-        const s = get()
-        if (!s.game) return { ok: false, message: 'No active game.' }
-        const g = structuredClone(s.game)
-        const { derived, aircraftId, missionId } = input
-
-        const ac = g.fleet.find((a) => a.id === aircraftId)
-        if (!ac) return { ok: false, message: 'Aircraft not found.' }
-        const spec = getSpec(ac.specId)
-        if (derived.landings < 1) return { ok: false, message: 'The recording has no completed landing yet.' }
-
-        // Mirrors flyMission's location check: the recorded departure is only
-        // trustworthy as *this* aircraft's takeoff point if the game already
-        // had it there. Without this, a recording could "teleport" an
-        // aircraft the game thinks is elsewhere — skipping a paid reposition —
-        // to wherever the sim flight actually started.
-        if (derived.startIcao && ac.locationIcao !== derived.startIcao) {
-          return {
-            ok: false,
-            message: `${ac.registration} is at ${ac.locationIcao}, not ${derived.startIcao}. Reposition it first.`,
-          }
-        }
-
-        let mission: Mission | undefined
-        if (missionId) {
-          mission = g.acceptedMissions.find((m) => m.id === missionId)
-          if (!mission) return { ok: false, message: 'Mission not found.' }
-          if (derived.startIcao !== mission.fromIcao) {
-            return {
-              ok: false,
-              message: `Recorded departure (${derived.startIcao ?? 'unrecognised field'}) does not match the mission's ${mission.fromIcao}.`,
-            }
-          }
-          if (derived.endIcao !== mission.toIcao) {
-            return {
-              ok: false,
-              message: `Recorded arrival (${derived.endIcao ?? 'unrecognised field'}) does not match the mission's ${mission.toIcao}.`,
-            }
-          }
-          // Seat capacity is a real game rule (unlike range — the recording
-          // already proves this aircraft can cover the distance), so mirror
-          // flyMission's check rather than let SimConnect verification bypass it.
-          if (spec.seats < mission.seatsRequired) {
-            return { ok: false, message: `${spec.name} seats ${spec.seats}; mission needs ${mission.seatsRequired}.` }
-          }
-        }
-
-        const price = g.fuel[spec.fuelType]
-        const fuel = fuelCost(derived.fuelUsedL, price)
-        const maint = maintenanceCost(derived.blockMinutes, spec.maintPerHour)
-        const onTime = mission ? g.day <= mission.expiresDay : true
-
-        if (mission) post(g, 'MISSION', mission.title, mission.reward)
-        post(g, 'FUEL', `Fuel — ${ac.registration} (${derived.fuelUsedL.toFixed(0)} L ${spec.fuelType})`, -fuel)
-        post(g, 'MAINTENANCE', `Maintenance — ${ac.registration}`, -maint)
-
-        ac.hoursFlown = +(ac.hoursFlown + derived.blockMinutes / 60).toFixed(2)
-        ac.condition = clamp(+(ac.condition - conditionLoss(derived.blockMinutes)).toFixed(2), 0, 100)
-        if (derived.endIcao) {
-          ac.locationIcao = derived.endIcao
-          g.pilotLocationIcao = derived.endIcao
-        }
-        g.stats.hoursFlown = +(g.stats.hoursFlown + derived.blockMinutes / 60).toFixed(2)
-
-        let reward = 0
-        let xp = 0
-        let operator = s.operator
-        if (mission) {
-          reward = mission.reward
-          if (onTime) g.reputation = clamp(g.reputation + mission.reputationReward, 0, 100)
-          else {
-            post(g, 'PENALTY', `Late completion — ${mission.title}`, -mission.penalty)
-            g.reputation = clamp(g.reputation - 2, 0, 100)
-          }
-          g.stats.missionsCompleted += 1
-          g.acceptedMissions = g.acceptedMissions.filter((m) => m.id !== mission!.id)
-
-          // Career experience accrues to the operator (persists across regions).
-          xp = xpForMission(mission)
-          operator = s.operator ? { ...s.operator, xp: s.operator.xp + xp } : s.operator
-        }
-
-        const dutyKind: DutyEntry['kind'] = mission ? 'MISSION' : 'FREE'
-        const { factor: dutyFactor, withheld } = applyDuty(g, derived.dutyMinutes, dutyKind, missionId, reward)
-
-        const net = reward - withheld - fuel - maint - (mission && !onTime ? mission.penalty : 0)
-        const summary: FlightLogSummary = {
-          id: uid('fl'),
-          day: g.day,
-          missionId,
-          aircraftId,
-          legs: derived.legs,
-          startIcao: derived.startIcao,
-          endIcao: derived.endIcao,
-          intermediates: derived.intermediates,
-          blockMinutes: derived.blockMinutes,
-          flightMinutes: derived.flightMinutes,
-          dutyMinutes: derived.dutyMinutes,
-          distanceNm: derived.distanceNm,
-          fuelUsedL: derived.fuelUsedL,
-          landings: derived.landings,
-          earnings: net,
-        }
-        g.flightLogs.unshift(summary)
-
-        set({ game: g, operator })
-
-        // The full record (with its track) is persisted separately and
-        // asynchronously — see flightLogStorage.ts. A failure here loses the
-        // track but not the summary already committed to GameState above.
-        const fullLog: FlightLog = {
-          ...summary,
-          simAircraftTitle: derived.simAircraftTitle,
-          simAtcModel: derived.simAtcModel,
-          track: derived.track,
-        }
-        saveFlightLog(fullLog).catch((err) => console.warn('[flightlog] could not persist track', err))
-
-        return {
-          ok: true,
-          onTime,
-          reward,
-          fuel,
-          maintenance: maint,
-          net,
-          dutyFactor,
-          message:
-            (mission
-              ? onTime
-                ? `Mission complete. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
-                : `Completed late — reputation and a penalty applied. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
-              : `Flight logged. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}.`) +
-            (withheld > 0 ? ` ⚠ Duty-time violation: ${dutyFactor === 0 ? '100%' : '50%'} of the reward withheld.` : ''),
+            (withheld > 0 ? ` ⚠ Duty-time violation: ${dutyFactor === 0 ? '100%' : '50%'} of the reward withheld.` : '') +
+            dryNote,
         }
       },
 
@@ -524,25 +570,29 @@ export const useGame = create<Store>()(
         const g = structuredClone(s.game)
         const ac = g.fleet.find((a) => a.id === aircraftId)
         if (!ac) return { ok: false, message: 'Aircraft not found.' }
-        if (ac.locationIcao === toIcao) return { ok: false, message: 'Aircraft is already there.' }
+        if (ac.locationIcao === toIcao && !ac.offField) return { ok: false, message: 'Aircraft is already there.' }
         if (blockMinutes <= 0 || fuelLitres < 0) return { ok: false, message: 'Enter a valid block time and fuel figure.' }
         const spec = getSpec(ac.specId)
-        const price = g.fuel[spec.fuelType]
-        const fuel = fuelCost(fuelLitres, price)
         const maint = maintenanceCost(blockMinutes, spec.maintPerHour)
+        const dry = fuelLitres > ac.fuelL
 
-        post(g, 'FUEL', `Ferry fuel — ${ac.registration} → ${toIcao}`, -fuel)
         post(g, 'MAINTENANCE', `Maintenance — ${ac.registration}`, -maint)
         ac.hoursFlown = +(ac.hoursFlown + blockMinutes / 60).toFixed(2)
         ac.condition = clamp(+(ac.condition - conditionLoss(blockMinutes)).toFixed(2), 0, 100)
+        ac.fuelL = Math.max(0, +(ac.fuelL - fuelLitres).toFixed(2))
         ac.locationIcao = toIcao
+        delete ac.offField
         g.pilotLocationIcao = toIcao
+        delete g.pilotOffField
         g.stats.hoursFlown = +(g.stats.hoursFlown + blockMinutes / 60).toFixed(2)
 
         applyDuty(g, computeDutyMinutes(blockMinutes, 1), 'FERRY', undefined, 0)
 
         set({ game: g })
-        return { ok: true, message: `Repositioned ${ac.registration} to ${toIcao}. Cost $${(fuel + maint).toLocaleString()}.` }
+        return {
+          ok: true,
+          message: `Repositioned ${ac.registration} to ${toIcao}. Cost $${maint.toLocaleString()}.${dry ? ' Tank ran dry — a fuel stop was needed.' : ''}`,
+        }
       },
 
       buyAircraft: (specId, baseIcao) => {
@@ -559,6 +609,7 @@ export const useGame = create<Store>()(
           hoursFlown: 0,
           condition: 100,
           locationIcao: baseIcao,
+          fuelL: spec.fuelCapacityL,
         }
         g.fleet.push(ac)
         post(g, 'AIRCRAFT_PURCHASE', `Bought ${spec.name} (${ac.registration})`, -spec.purchaseCost)
@@ -595,10 +646,152 @@ export const useGame = create<Store>()(
           return { game: g }
         }),
 
+      refuel: (aircraftId, litres, maxCapacityL) => {
+        const s = get()
+        if (!s.game) return { ok: false, message: 'No active game.' }
+        const g = structuredClone(s.game)
+        const ac = g.fleet.find((a) => a.id === aircraftId)
+        if (!ac) return { ok: false, message: 'Aircraft not found.' }
+        const spec = getSpec(ac.specId)
+        if (!airportOffersFuel(ac.locationIcao, spec.fuelType))
+          return { ok: false, message: `${ac.locationIcao} has no ${spec.fuelType}.` }
+        if (litres <= 0) return { ok: false, message: 'Enter a positive number of litres.' }
+        const cap = maxCapacityL ?? spec.fuelCapacityL
+        // Reject only a genuine overfill; allow a <=0.5 L rounding slop so a
+        // "fill to full" button that rounds the gap up still succeeds.
+        if (ac.fuelL + litres > cap + 0.5)
+          return { ok: false, message: `Tank holds ${Math.round(cap)} L; that would overfill by ${Math.round(ac.fuelL + litres - cap)} L.` }
+        const airport = getAirport(ac.locationIcao)
+        const newLevel = Math.min(cap, +(ac.fuelL + litres).toFixed(2)) // clamp so a rounded-up fill lands exactly at cap
+        const added = +(newLevel - ac.fuelL).toFixed(2)                 // charge only for what actually went in
+        if (added <= 0) return { ok: false, message: 'Tank is already full.' }
+        const cost = refuelCost(added, g.fuel[spec.fuelType], airport.fuelPriceMult)
+        if (g.balance < cost) return { ok: false, message: `Not enough funds. Need $${cost.toLocaleString()}.` }
+        post(g, 'FUEL', `Refuel — ${ac.registration} (${Math.round(added)} L ${spec.fuelType} @ ${airport.icao})`, -cost)
+        ac.fuelL = newLevel
+        set({ game: g })
+        return { ok: true, cost, message: `Loaded ${Math.round(added)} L ${spec.fuelType} into ${ac.registration} for $${cost.toLocaleString()}.` }
+      },
+
+      // ——— Always-on sim session (#20). These are the ONLY mutation points for
+      // session effects; the reducer in game/simSession.ts stays pure. All
+      // return { messages } for useSimSession to toast — never notify here.
+
+      armMissions: (aircraftId, icao) => {
+        const s = get()
+        if (!s.game) return { messages: [] }
+        const g = structuredClone(s.game)
+        const messages = armInto(g, aircraftId, icao)
+        set({ game: g })
+        return { messages }
+      },
+
+      stopAt: (aircraftId, icao) => {
+        const s = get()
+        if (!s.game) return { messages: [] }
+        const g = structuredClone(s.game)
+        // Defensively ensure a chain exists (D14 fix): in the normal flow
+        // commitLeg's off-block already opened one, but a mid-air attach that
+        // missed off-block hasn't. No sim identity is available here, so seed
+        // an empty title — commitLeg's ensureOpenChain call backfills it later.
+        ensureOpenChain(g, aircraftId, '', '')
+        const { messages, operator } = settleStop(g, s.operator, aircraftId, icao)
+        set({ game: g, operator })
+        return { messages }
+      },
+
+      beginChain: (aircraftId, simTitle, simAtcModel) => {
+        const s = get()
+        if (!s.game) return
+        const g = structuredClone(s.game)
+        ensureOpenChain(g, aircraftId, simTitle, simAtcModel)
+        set({ game: g })
+      },
+
+      commitLeg: (input) => {
+        const s = get()
+        if (!s.game) return { messages: [] }
+        const g = structuredClone(s.game)
+        const ac = g.fleet.find((a) => a.id === input.aircraftId)
+        if (!ac) return { messages: [] }
+        const spec = getSpec(ac.specId)
+        const messages: string[] = []
+        let operator = s.operator
+
+        // 0. Open the chain BEFORE settling — a mission completing on the
+        //    first leg of a fresh chain must land in THIS chain's earnings/
+        //    missionIds, not be dropped because no chain existed yet (D14 fix).
+        ensureOpenChain(g, input.aircraftId, input.simTitle, input.simAtcModel)
+
+        // 1. Complete-then-arm at a catalogued field (idempotent with STOP_AT).
+        if ('icao' in input.pos) {
+          const r = settleStop(g, operator, input.aircraftId, input.pos.icao)
+          messages.push(...r.messages)
+          operator = r.operator
+        }
+
+        // 2. Per-leg accounting: maintenance, wear, hours, duty (D14).
+        const maint = maintenanceCost(input.leg.blockMinutes, spec.maintPerHour)
+        post(g, 'MAINTENANCE', `Maintenance — ${ac.registration}`, -maint)
+        ac.hoursFlown = +(ac.hoursFlown + input.leg.blockMinutes / 60).toFixed(2)
+        ac.condition = clamp(+(ac.condition - conditionLoss(input.leg.blockMinutes)).toFixed(2), 0, 100)
+        g.stats.hoursFlown = +(g.stats.hoursFlown + input.leg.blockMinutes / 60).toFixed(2)
+        const firstToday = !g.dutyLog.some((e) => e.day === g.day)
+        const dutyMinutes = Math.round(input.leg.blockMinutes + 30 + (firstToday ? 30 : 0))
+        applyDuty(g, dutyMinutes, g.openChain?.missionIds.length ? 'MISSION' : 'FREE', undefined, 0)
+
+        // 3. External fuel (sim-menu refills + pre-connect seed) billed at
+        //    arrival rates; base market price where the field sells none (D14).
+        if (input.externalFuelL > 0.5) {
+          const arrival = 'icao' in input.pos ? getAirport(input.pos.icao) : null
+          const mult = arrival && airportOffersFuel(arrival.icao, spec.fuelType) ? arrival.fuelPriceMult : 1.0
+          const cost = refuelCost(input.externalFuelL, g.fuel[spec.fuelType], mult)
+          post(g, 'FUEL', `External refuel detected — ${Math.round(input.externalFuelL)} L billed${arrival ? ` at ${arrival.icao} rates` : ''}`, -cost)
+          messages.push(`External fuel detected: ${Math.round(input.externalFuelL)} L billed for $${cost.toLocaleString()}.`)
+        }
+
+        // 4. Sim → game state sync (D7/D9).
+        ac.fuelL = +input.simFuelL.toFixed(2)
+        if ('icao' in input.pos) {
+          ac.locationIcao = input.pos.icao
+          delete ac.offField
+          g.pilotLocationIcao = input.pos.icao
+          delete g.pilotOffField
+        } else {
+          ac.offField = { lat: input.pos.lat, lon: input.pos.lon }
+          g.pilotOffField = { lat: input.pos.lat, lon: input.pos.lon }
+          messages.push('Parked off-field — position saved. No fuel or missions here; fly or ferry out to resume.')
+        }
+
+        // 5. Chain bookkeeping (one logbook entry per contiguous chain — D14).
+        //    ensureOpenChain (step 0) already guarantees g.openChain exists.
+        const chain = g.openChain!
+        chain.legs.push(input.leg)
+        chain.landings += input.landings
+        chain.dutyMinutes += dutyMinutes
+        // Deliberate: external-fuel billing is NOT folded into earnings — fuel
+        // is a resource purchase (it lives on in the tank), not a per-flight
+        // cost, matching how in-app refuels are ledgered outside flight nets.
+        chain.earnings -= maint
+        chain.track.push(...input.track)
+
+        set({ game: g, operator })
+        return { messages }
+      },
+
+      finalizeChain: () => {
+        const s = get()
+        if (!s.game?.openChain) return
+        const g = structuredClone(s.game)
+        finalizeChainInto(g)
+        set({ game: g })
+      },
+
       advanceDay: () =>
         set((s) => {
           if (!s.game) return s
           const g = structuredClone(s.game)
+          finalizeChainInto(g)
           g.day += 1
 
           // Daily fixed costs across the fleet.
@@ -612,6 +805,7 @@ export const useGame = create<Store>()(
               post(g, 'PENALTY', `Missed deadline — ${m.title}`, -m.penalty)
               g.reputation = clamp(g.reputation - 4, 0, 100)
               g.stats.missionsFailed += 1
+              g.armedMissions = g.armedMissions.filter((r) => r.missionId !== m.id)
             } else {
               stillValid.push(m)
             }

@@ -7,12 +7,19 @@ import { getRegion } from './data/regions'
 import { UIContext, NavContext, type Tab } from './components/ui'
 import { StartScreen } from './components/StartScreen'
 import { SimStatus } from './components/SimStatus'
+import { useSimSession } from './sim/useSimSession'
+import { AircraftChoiceDialog } from './components/AircraftChoiceDialog'
 import { Dashboard } from './components/Dashboard'
 import { Missions } from './components/Missions'
 import { Fleet } from './components/Fleet'
 import { Market } from './components/Market'
 import { Ledger } from './components/Ledger'
 import { Logbook } from './components/Logbook'
+
+function SimSessionHost() {
+  const { choose } = useSimSession()
+  return <AircraftChoiceDialog choose={choose} />
+}
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -97,6 +104,7 @@ export function App() {
   return (
     <UIContext.Provider value={{ notify }}>
       <NavContext.Provider value={{ tab, setTab, selectedMissionId, setSelectedMissionId }}>
+      <SimSessionHost />
       <div className="app">
         <header className="topbar">
           <div className="brand">

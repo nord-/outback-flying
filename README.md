@@ -4,11 +4,13 @@ A **Royal Flying Doctor Service–inspired career manager** for flight simulator
 
 Inspired by *The Flying Doctors*, the game hands you emergency and routine
 call-outs across remote airstrips and keeps the whole business running —
-income, expenses, your fleet, reputation and the calendar. **You fly every leg
-yourself, in whatever simulator you like** (MSFS 2020/2024, X-Plane, DCS, or
-even a paper map). When you land, you file a short flight report — or, on
-Windows with MSFS running, let the game read block time, fuel and landings
-straight out of SimConnect — and the game settles the books.
+income, expenses, your fleet, fuel, reputation and the calendar. **You fly
+every leg yourself, in whatever simulator you like** (MSFS 2020/2024, X-Plane,
+DCS, or even a paper map). On Windows with MSFS running, the game tracks your
+flight live over SimConnect — missions arm when you release the brakes and
+settle when you land, fuel is reconciled against the sim — so the books keep
+themselves. Anywhere else, you file a short flight report by hand and the game
+settles up.
 
 It's a desktop app (Electron) built on a Vite + React + TypeScript core.
 
@@ -19,11 +21,17 @@ It's a desktop app (Electron) built on a Vite + React + TypeScript core.
    region-specific airstrips. Each has a distance, seat requirement, urgency,
    reward and a deadline. Accepting a mission that would breach your duty-time
    limits (see below) warns you first.
-2. **Fly it yourself** in your simulator of choice.
-3. **File the flight report** — block time, fuel burned, landings — or, if
-   SimConnect is connected, review the auto-derived report and commit it as-is.
-   The game charges fuel and maintenance, pays the fare, adds airframe wear,
-   accrues duty time and career XP, and parks the aircraft at the destination.
+2. **Fly it yourself** in your simulator of choice. With SimConnect connected,
+   the flight books itself — the mission arms at off-block and completes when
+   you land at the destination (even a running turnaround at an intermediate
+   stop counts). Otherwise, **file the flight report** by hand — block time,
+   fuel burned, landings. Either way the game charges maintenance, draws fuel
+   from the tank, pays the fare, adds airframe wear, accrues duty time and
+   career XP, and parks the aircraft where it landed.
+3. **Keep it fuelled.** Fuel is a resource in the tank, not an automatic
+   per-leg charge: refuel (a paid action) where the field sells your type,
+   plan the burn for the leg — or the return — yourself, and land for a fuel
+   stop if you have to.
 4. **Manage the business** — buy and sell aircraft, repair worn airframes,
    reposition (ferry) aircraft to where the next job is, and watch your cash,
    reputation, duty hours and fuel prices.
@@ -45,18 +53,27 @@ better-paying work.
   Pilatus PC-6/PC-12, Kodiak 100, Cessna 208B Caravan, King Air 350i). Seats,
   range, cruise speed, fuel type (Avgas / Jet A-1) and running costs all gate
   which jobs you can take and how profitable they are.
-- **Logistics matter.** An aircraft stays wherever you last landed it. If the
-  next job departs elsewhere, you fly a (non-paying) ferry leg first.
-- **SimConnect integration (Windows desktop app).** Connect to a running MSFS
-  2020 or 2024 session and the game samples your position, altitude, speed and
-  aircraft type live, matching it against your fleet (forgiving real-world
-  variants, e.g. a Bonanza A36 counts as the G36 spec). It derives block/flight
-  time, distance, fuel burn and a simplified ground track per leg — ready to
-  review and commit instead of typing figures by hand. Every flown route is
-  kept in a **logbook** with its track plotted on a map. Not connected, or
-  flying MSFS on Mac/Linux, X-Plane, DCS, etc.? The honesty-system manual
-  report still works everywhere — the game pre-fills sensible suggestions
-  based on distance and the aircraft's performance.
+- **Fuel is a resource.** Each aircraft carries a tank; flying draws it down.
+  Refuelling is a paid action, and only where the field sells the right type
+  (Avgas / Jet A-1) at that field's price. Range planning, tankering and
+  fuel stops are the pilot's problem, not an automatic line-item.
+- **Logistics matter.** An aircraft stays wherever you last landed it — even
+  a bush strip or open ground away from any catalogued field, which it holds
+  until you fly or ferry it out. If the next job departs elsewhere, you fly a
+  (non-paying) ferry leg first.
+- **SimConnect integration (Windows desktop app) — always-on tracking.**
+  Connect to a running MSFS 2020/2024 session and the game continuously tracks
+  the aircraft it matches to your fleet (by your pilot's location and type,
+  forgiving real-world variants — a Bonanza A36 counts as the G36 spec). It
+  reads engine, position, speed and fuel live: legs open when you release the
+  brakes and close when you shut down, accepted missions settle automatically
+  at their destination, and fuel is kept in agreement between game and sim —
+  the game is authoritative on the ground with engines off (it writes your
+  tank back to the sim), the sim is authoritative in flight (fuel added in the
+  sim's own menus gets billed). Every flown route is kept in a **logbook**
+  with its track on a map. Not connected, or flying on Mac/Linux, X-Plane,
+  DCS, etc.? The honour-system manual report works everywhere — the game
+  pre-fills sensible suggestions from distance and the aircraft's performance.
 - **Duty-time limits.** Duty (block time + 30 min per stop) is tracked across
   a rolling 1/7/14/28-day window against real aviation-style caps (10 h / 60 h
   / 110 h / 190 h). The dashboard shows your running totals, accepting a
@@ -110,8 +127,9 @@ npm run electron:build # package a desktop app → release/
 electron/          Electron main + preload + SimConnect bridge (desktop shell)
 src/
   data/            Airport, aircraft and region catalogues (real-world inspired)
-  game/            Pure game logic — types, geo, economy, missions, duty, progression, store
-  sim/             SimConnect sample types and React hooks (useSim, useFlightRecorder)
+  game/            Pure game logic — types, geo, economy, missions, duty,
+                    progression, flightlog, simSession (the sim state machine), store
+  sim/             SimConnect sample types and React hooks (useSim, useSimSession)
   components/      React UI (Dashboard, Missions, Fleet, Market, Ledger, Logbook,
                     OperationsMap, modals)
 ```
@@ -138,6 +156,15 @@ components only render state and dispatch actions through the Zustand store
 - **Pilot duty-time limits** — aviation-style caps on flying hours over 1/7/14/28
   days, with dashboard tracking, an accept-time warning before breaching a
   limit, and a reward penalty if you fly over anyway.
+- **Fuel as a resource** — a tank per aircraft that flying draws down, paid
+  refuelling gated by each field's fuel availability and price, so range
+  planning and fuel stops are part of the job.
+- **Always-on sim tracking** — with SimConnect connected, flights book
+  themselves: engine-driven off-block/on-block legs, automatic mission
+  arming/completion (running turnarounds included), game↔sim fuel-state
+  reconciliation with a single writer, and persisted off-field parking. The
+  old manual "start recording" step is gone; the honour-mode report remains
+  for playing without a sim.
 
 ### High priority
 
@@ -145,15 +172,13 @@ components only render state and dispatch actions through the Zustand store
   cash — relocate the operator to a fresh station in another region so a single
   career can expand across the globe. (The operator profile is the foundation
   for this; the transfer action itself is the remaining piece.)
-- **A real airport database with fuel availability.** Not every strip sells
-  fuel, and those that do don't all carry the right type. An outback field might
-  have Avgas but no Jet A-1 (or nothing at all), so range planning and where you
-  can refuel become part of the challenge — you may need to tanker fuel or route
-  via a field that has what your aircraft burns.
+- **Bush airstrips (#5)** — a small-strip tier distinct from regional airports:
+  runway/surface gating and strips that sell no fuel (or the wrong type),
+  which light up the dormant fuel-availability marker the resource model
+  already ships with.
 
 ### Later
 
-- Multi-leg missions and en-route fuel stops
 - Hiring pilots so you can run several aircraft in parallel
 - Save export/import and multiple save slots
 - Weather, night ops and seasonal demand

@@ -1,23 +1,46 @@
-// Pure derivation layer for SimConnect flight recording (issue #9, Phase 2).
+// Pure derivation layer for SimConnect flight tracking (issue #9, evolved by
+// the always-on session in issue #20).
 //
-// Turns a stream of live `SimSample`s (src/sim/types.ts, produced by the
-// Phase 1 Electron bridge) into a `DerivedFlight` — legs, block/flight/duty
-// time, distance, fuel used, and a simplified track — with no side effects and
-// no dependency on the sim, Electron, or React. `recordSample` is a reducer,
-// so both a live recorder (folding samples one at a time as they arrive) and a
-// test (folding a whole synthetic array at once via `deriveFlightFromSamples`)
-// exercise the exact same logic.
+// Folds a stream of live `SimSample`s (src/sim/types.ts, produced by the
+// Electron bridge) into `RecorderState` — legs (block/flight time, distance,
+// fuel used) bounded by engine events, landings, and external-fuel
+// accumulation — with no side effects and no dependency on the sim, Electron,
+// or React. `recordSample` is a pure reducer: the always-on session
+// (src/sim/useSimSession.ts) folds live samples one at a time, committing each
+// closed leg to the store via `commitLeg` (src/game/store.ts) as it lands —
+// there is no separate offline "finish recording" step (D15).
 import type { Airport, FlightLeg, TrackPoint, AircraftSpec } from './types'
 import type { SimSample } from '../sim/types'
 import { airportsInRegion } from '../data/airports'
 import { distanceNm, bearingDeg, toRad, EARTH_RADIUS_NM, type LatLon } from './geo'
 
-const STATIONARY_KTS = 2 // at/under this groundspeed, on the ground, counts as stopped
-const GALLONS_TO_LITRES = 3.785411784
+export const STATIONARY_KTS = 2 // at/under this groundspeed, on the ground, counts as stopped
+export const EXTERNAL_FUEL_SLOP_GAL = 0.5 // per-sample fuel increase below this is float noise, not a refuel
+export const GALLONS_TO_LITRES = 3.785411784
 const DEFAULT_NEAREST_TOLERANCE_NM = 5
 const DEFAULT_SIMPLIFY_EPSILON_NM = 0.05 // ~90 m — invisible at map scale
+// No real aircraft covers ground anywhere near this fast between consecutive
+// live ~1s samples — a jump implying more is a slew/teleport or an in-sim
+// "reset flight", not flight (#22 review). Set far above any real aircraft's
+// speed deliberately: this codebase's own test fixtures (legSamples et al.)
+// compress an entire cross-country leg into a handful of 1-second-apart
+// samples to keep tests fast, which already implies speeds in the hundreds of
+// thousands of knots for perfectly ordinary synthetic legs. A lower threshold
+// would flag those as false positives. This still catches any real slew/reset
+// that relocates the aircraft by more than a couple hundred nm within one
+// real second — comfortably covering the "reset back near the departure
+// field" scenario the guard exists for.
+export const MAX_PLAUSIBLE_KTS = 1_000_000
 
 const round2 = (n: number): number => Math.round(n * 100) / 100
+
+/** True when the position implied by `sample` could not plausibly have been
+ *  reached from `prev` by real flight in the elapsed time. */
+function isImplausibleJump(prev: SimSample, sample: SimSample): boolean {
+  const dtHours = (sample.t - prev.t) / 3_600_000
+  if (dtHours <= 0) return false
+  return distanceNm(prev, sample) / dtHours > MAX_PLAUSIBLE_KTS
+}
 
 /** Whichever airport in the given region is closest, if within tolerance —
  *  otherwise null (an off-catalogue field; the leg still records raw facts,
@@ -57,6 +80,17 @@ export function matchesAircraft(spec: AircraftSpec, sim: { title: string; atcMod
     const needle = kw.toLowerCase()
     return haystacks.some((h) => h.includes(needle))
   })
+}
+
+/** SimConnect-derived tank capacity in litres for a spec/sample pair, or
+ *  `undefined` when there's no live sample or it doesn't plausibly match this
+ *  spec (see `matchesAircraft`) — callers fall back to `spec.fuelCapacityL`.
+ *  Shared by the Fleet card and the refuel dialog so both cap refuelling at
+ *  the actually loaded model's capacity, not a mismatched spec's. */
+export function simCapacityL(spec: AircraftSpec, sample: SimSample | null): number | undefined {
+  return sample && spec.simMatch?.length && matchesAircraft(spec, sample)
+    ? sample.fuelCapacityGal * GALLONS_TO_LITRES
+    : undefined
 }
 
 /** Duty time: block time plus 30 min turnaround for each stop (start + every
@@ -119,8 +153,9 @@ interface OpenLeg {
   startLat: number
   startLon: number
   startFuelGal: number
-  flightStartT: number | null // set once airborne
-  flightEndT: number | null // set on touchdown; cleared again by a touch-and-go
+  airborneMs: number // accumulated duration of every airborne segment closed so far this leg
+  flightStartT: number | null // start of the CURRENT airborne segment; null while grounded
+  landedOnce: boolean // true once at least one touchdown has occurred this leg
   endT: number
   endLat: number
   endLon: number
@@ -135,18 +170,37 @@ export interface RecorderState {
   currentLeg: OpenLeg | null
   fullTrack: TrackPoint[]
   lastSample: SimSample | null
+  firstSample: SimSample | null
+  externalFuelGal: number
+  // Fuel level just before an unconfirmed rise began, or null when there is
+  // none outstanding — held for one sample before being billed so a transient
+  // slosh/unporting spike that reverts on the next sample is dropped instead
+  // of committed (#22 review).
+  pendingExternalBaselineGal: number | null
 }
 
 /** A recording session always belongs to one world region — the station's
  *  current one (GameState.regionId) — since airport matching is region-scoped. */
 export function initRecorderState(regionId: string): RecorderState {
-  return { regionId, legs: [], landings: 0, currentLeg: null, fullTrack: [], lastSample: null }
+  return {
+    regionId,
+    legs: [],
+    landings: 0,
+    currentLeg: null,
+    fullTrack: [],
+    lastSample: null,
+    firstSample: null,
+    externalFuelGal: 0,
+    pendingExternalBaselineGal: null,
+  }
 }
 
 function closeLeg(leg: OpenLeg, regionId: string): FlightLeg {
   const blockMinutes = (leg.endT - leg.startT) / 60000
-  const flightMinutes =
-    leg.flightStartT !== null && leg.flightEndT !== null ? (leg.flightEndT - leg.flightStartT) / 60000 : 0
+  // Sum of every completed airborne segment — a running turnaround (land,
+  // taxi with engines on, take off again) must not count the parked interval
+  // between segments as flight time (#22 review).
+  const flightMinutes = leg.airborneMs / 60000
   // Fuel only ever decreases within a leg by construction: a refuel happens
   // while grounded and stationary, which is the gap *between* legs, not inside
   // one — but clamp to 0 anyway as a defensive floor.
@@ -164,29 +218,62 @@ function closeLeg(leg: OpenLeg, regionId: string): FlightLeg {
 
 /**
  * Fold one live sample into the recorder state. Leg boundaries are inferred
- * purely from `onGround`/`groundKts` (Phase 1 doesn't stream an engine SimVar):
- * a leg opens the moment the aircraft starts moving from a stop (taxi-out —
- * "chocks off"), and closes once it has flown, landed, and come to a stop
- * again ("chocks on"). Time spent parked between legs (a fuel/overnight stop)
- * therefore falls in neither leg, which is exactly what makes the block-time
- * split correct without needing to special-case a refuel.
+ * from engine state (`SimSample.enginesOn`): off-block is engine start (or the
+ * recorder attaching to an aircraft that's already running or airborne), and
+ * on-block is engines going off while on the ground. A running stop — engines
+ * still on — stays inside the leg, which is what lets a running turnaround
+ * (land, taxi, take off again without shutting down) count as one leg rather
+ * than closing at every stop.
  */
 export function recordSample(state: RecorderState, sample: SimSample): RecorderState {
   const point = toTrackPoint(sample)
   const fullTrack = [...state.fullTrack, point]
-  const moving = sample.groundKts > STATIONARY_KTS
-  let { legs, landings } = state
+  let { legs, landings, externalFuelGal } = state
   let currentLeg = state.currentLeg
 
+  // A slew/teleport or in-sim "reset flight" (SimConnect stays connected) can
+  // put the aircraft down far from where the last sample had it. Otherwise
+  // this is indistinguishable from a real landing: it would mark a touchdown,
+  // sum the jump into distanceNm, and could fire a stop at the departure
+  // field (#22 review). Fuel accumulation is skipped too, since a reset can
+  // also snap fuel back to a default load.
+  const discontinuity = state.lastSample != null && isImplausibleJump(state.lastSample, sample)
+
+  // Fuel the game didn't sell: a sustained sample-to-sample increase beyond
+  // slop is a sim-menu refill — accumulated here, billed by the store at
+  // on-block (D14). Held one sample as `pendingExternalBaselineGal` before
+  // being committed: a transient slosh/unporting spike that reverts on the
+  // very next sample is dropped instead of billed (#22 review).
+  let pendingExternalBaselineGal = state.pendingExternalBaselineGal
+  if (discontinuity) {
+    pendingExternalBaselineGal = null
+  } else if (state.lastSample) {
+    if (pendingExternalBaselineGal !== null) {
+      if (sample.fuelGal > state.lastSample.fuelGal + EXTERNAL_FUEL_SLOP_GAL) {
+        // Still rising — keep holding, wait for it to settle.
+      } else if (sample.fuelGal > pendingExternalBaselineGal + EXTERNAL_FUEL_SLOP_GAL) {
+        externalFuelGal += sample.fuelGal - pendingExternalBaselineGal // settled higher — confirmed refill
+        pendingExternalBaselineGal = null
+      } else {
+        pendingExternalBaselineGal = null // reverted close to baseline — was noise
+      }
+    } else if (sample.fuelGal > state.lastSample.fuelGal + EXTERNAL_FUEL_SLOP_GAL) {
+      pendingExternalBaselineGal = state.lastSample.fuelGal // candidate rise begins
+    }
+  }
+
   if (!currentLeg) {
-    if (!sample.onGround || moving) {
+    // Off-block: engines come on — or the recorder attaches to an aircraft
+    // that is already running or airborne (engines-running connect, §8).
+    if (sample.enginesOn || !sample.onGround) {
       currentLeg = {
         startT: sample.t,
         startLat: sample.lat,
         startLon: sample.lon,
         startFuelGal: sample.fuelGal,
+        airborneMs: 0,
         flightStartT: sample.onGround ? null : sample.t,
-        flightEndT: null,
+        landedOnce: false,
         endT: sample.t,
         endLat: sample.lat,
         endLon: sample.lon,
@@ -194,7 +281,22 @@ export function recordSample(state: RecorderState, sample: SimSample): RecorderS
         track: [point],
       }
     }
-    // else: stationary on the ground with no leg open — still idle.
+  } else if (discontinuity) {
+    // Re-baseline at the new position: keep the leg's already-accumulated
+    // timing/fuel bookkeeping, but drop the jump itself from the track (so it
+    // is never summed into distanceNm) and don't evaluate touchdown for this
+    // sample — flightStartT re-derives from the sample's (post-jump) ground
+    // state so a later ordinary sample doesn't measure flight time across the
+    // discontinuity.
+    currentLeg = {
+      ...currentLeg,
+      endT: sample.t,
+      endLat: sample.lat,
+      endLon: sample.lon,
+      endFuelGal: sample.fuelGal,
+      flightStartT: sample.onGround ? null : sample.t,
+      track: [point],
+    }
   } else {
     currentLeg = {
       ...currentLeg,
@@ -207,106 +309,37 @@ export function recordSample(state: RecorderState, sample: SimSample): RecorderS
 
     if (!sample.onGround) {
       if (currentLeg.flightStartT === null) currentLeg.flightStartT = sample.t
-      // Airborne again before a ground stop closed the leg (a bounce/touch-and-
-      // go) — still the same leg, so the earlier landing mark doesn't stand.
-      if (currentLeg.flightEndT !== null) currentLeg.flightEndT = null
     } else {
-      if (currentLeg.flightStartT !== null && currentLeg.flightEndT === null) {
-        currentLeg.flightEndT = sample.t // first grounded sample after flight = touchdown
+      if (currentLeg.flightStartT !== null) {
+        // Touchdown: fold this airborne segment's duration in and re-arm for a
+        // possible further segment (bounce/touch-and-go/running turnaround) —
+        // ground time between segments is never counted as flight time.
+        currentLeg.airborneMs += sample.t - currentLeg.flightStartT
+        currentLeg.flightStartT = null
+        currentLeg.landedOnce = true
         landings += 1
       }
-      if (currentLeg.flightEndT !== null && !moving) {
+      // On-block: engines off on the ground closes the leg — a running stop
+      // (engines on) stays inside the leg (D8/§6).
+      if (!sample.enginesOn) {
         legs = [...legs, closeLeg(currentLeg, state.regionId)]
         currentLeg = null
       }
     }
   }
 
-  return { regionId: state.regionId, legs, landings, currentLeg, fullTrack, lastSample: sample }
-}
-
-/** Everything a `FlightLog` needs except the persistence/game-state fields
- *  (id, day, missionId, aircraftId, earnings) that only the store can supply. */
-export interface DerivedFlight {
-  legs: FlightLeg[]
-  startIcao: string | null
-  endIcao: string | null
-  intermediates: string[]
-  blockMinutes: number
-  flightMinutes: number
-  dutyMinutes: number
-  distanceNm: number
-  fuelUsedL: number
-  landings: number
-  track: TrackPoint[]
-  simAircraftTitle: string
-  simAtcModel: string
-}
-
-/**
- * Finalise a recording. Returns null if nothing flyable was recorded (no
- * completed leg — e.g. the aircraft never left the ground). A leg that has
- * landed but not yet rolled to a full stop is force-closed at its last sample,
- * so ending the recording while still taxiing to the ramp doesn't lose it; a
- * leg that's still airborne (or never took off) is simply dropped — callers
- * should gate "complete flight" on having landed, same as the existing manual
- * flyMission check (`landings >= 1`).
- */
-export function closeFlight(state: RecorderState): DerivedFlight | null {
-  let legs = state.legs
-  const { currentLeg, landings, fullTrack, lastSample } = state
-
-  if (currentLeg && currentLeg.flightEndT !== null) {
-    legs = [...legs, closeLeg(currentLeg, state.regionId)]
-  }
-  if (legs.length === 0 || landings === 0) return null
-
-  const blockMinutes = round2(legs.reduce((sum, l) => sum + l.blockMinutes, 0))
-  const flightMinutes = round2(legs.reduce((sum, l) => sum + l.flightMinutes, 0))
-  const distanceTotal = round2(legs.reduce((sum, l) => sum + l.distanceNm, 0))
-  const fuelUsedL = round2(legs.reduce((sum, l) => sum + l.fuelUsedL, 0))
-  const intermediates = legs
-    .slice(0, -1)
-    .map((l) => l.toIcao)
-    .filter((icao): icao is string => icao !== null)
+  const firstSample = state.firstSample ?? sample
 
   return {
+    regionId: state.regionId,
     legs,
-    startIcao: legs[0].fromIcao,
-    endIcao: legs[legs.length - 1].toIcao,
-    intermediates,
-    blockMinutes,
-    flightMinutes,
-    dutyMinutes: computeDutyMinutes(blockMinutes, legs.length),
-    distanceNm: distanceTotal,
-    fuelUsedL,
     landings,
-    track: simplifyTrack(fullTrack),
-    simAircraftTitle: lastSample?.title ?? '',
-    simAtcModel: lastSample?.atcModel ?? '',
+    currentLeg,
+    fullTrack,
+    lastSample: sample,
+    firstSample,
+    externalFuelGal,
+    pendingExternalBaselineGal,
   }
 }
 
-/** Convenience for tests/offline analysis: fold a whole sample array at once. */
-export function deriveFlightFromSamples(samples: SimSample[], regionId: string): DerivedFlight | null {
-  return closeFlight(samples.reduce(recordSample, initRecorderState(regionId)))
-}
-
-/** A live-recording summary for the UI — deliberately not the raw `RecorderState`
- *  so callers never reach into `OpenLeg` internals directly. */
-export interface RecorderSnapshot {
-  legsCompleted: number
-  landings: number
-  isOnLeg: boolean
-  isAirborne: boolean
-}
-
-export function recorderSnapshot(state: RecorderState): RecorderSnapshot {
-  const leg = state.currentLeg
-  return {
-    legsCompleted: state.legs.length,
-    landings: state.landings,
-    isOnLeg: leg !== null,
-    isAirborne: leg !== null && leg.flightStartT !== null && leg.flightEndT === null,
-  }
-}

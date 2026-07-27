@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { useSim } from '../sim/useSim'
+import { useSessionState } from '../sim/useSimSession'
+import { useGame } from '../game/store'
 import type { SimProtocol } from '../sim/types'
 
 const SIM_VERSIONS: { label: string; protocol: SimProtocol }[] = [
@@ -13,6 +15,8 @@ const SIM_VERSIONS: { label: string; protocol: SimProtocol }[] = [
  */
 export function SimStatus() {
   const { available, status, message, sample, connect, disconnect } = useSim()
+  const session = useSessionState()
+  const game = useGame((s) => s.game)
   const [protocol, setProtocol] = useState<SimProtocol>('KittyHawk')
   const [busy, setBusy] = useState(false)
 
@@ -41,7 +45,12 @@ export function SimStatus() {
 
       {status === 'connected' && sample ? (
         <span className="sim-live">
-          <b>{sample.atcModel || 'Aircraft'}</b>
+          <b>
+            {(() => {
+              const ac = game?.fleet.find((a) => a.id === session.aircraftId)
+              return ac ? `${ac.registration} · ${session.phase === 'GROUND_SECURE' ? 'Secured' : 'In flight'}` : sample.atcModel || 'Aircraft'
+            })()}
+          </b>
           <span className="sep">·</span>
           {sample.onGround ? 'GND' : 'AIR'}
           <span className="sep">·</span>

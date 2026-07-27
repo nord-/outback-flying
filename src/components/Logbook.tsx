@@ -42,7 +42,9 @@ function TrackMap({ log }: { log: FlightLog }) {
 }
 
 function routeLabel(summary: FlightLogSummary): string {
-  return [summary.startIcao ?? 'unrecognised field', ...summary.intermediates, summary.endIcao ?? 'unrecognised field'].join(' → ')
+  const route = [summary.startIcao ?? 'unrecognised field', ...summary.intermediates, summary.endIcao ?? 'unrecognised field'].join(' → ')
+  const n = summary.missionIds?.length ?? (summary.missionId ? 1 : 0)
+  return n > 1 ? `${route} · ${n} missions` : route
 }
 
 export function Logbook() {

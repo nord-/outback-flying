@@ -23,6 +23,11 @@ export function fuelCost(litres: number, pricePerLitre: number): number {
   return Math.round(litres * pricePerLitre)
 }
 
+/** Cost to load `litres` of fuel at a field: market price × the field's multiplier. */
+export function refuelCost(litres: number, pricePerLitre: number, mult: number): number {
+  return Math.round(litres * pricePerLitre * mult)
+}
+
 /** Maintenance accrued for a leg, in dollars. */
 export function maintenanceCost(blockMinutes: number, maintPerHour: number): number {
   return Math.round((blockMinutes / 60) * maintPerHour)

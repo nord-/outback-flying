@@ -1,4 +1,4 @@
-import type { GameState, Mission, Urgency } from './types'
+import type { GameState, GeoPos, Mission, Urgency } from './types'
 import { airportsInRegion, getAirport } from '../data/airports'
 
 export interface MapPoint {
@@ -36,15 +36,19 @@ function toPoint(icao: string): MapPoint {
   return { icao: a.icao, name: a.name, lat: a.lat, lon: a.lon }
 }
 
+function offPoint(pos: GeoPos): MapPoint {
+  return { icao: '', name: 'Off-field', lat: pos.lat, lon: pos.lon }
+}
+
 export function deriveMapView(game: GameState): MapView {
-  const pilot = toPoint(game.pilotLocationIcao)
+  const pilot = game.pilotOffField ? offPoint(game.pilotOffField) : toPoint(game.pilotLocationIcao)
   return {
     airports: airportsInRegion(game.regionId).map((a) => ({ icao: a.icao, name: a.name, lat: a.lat, lon: a.lon })),
     homeBase: toPoint(game.homeBaseIcao),
     pilot,
     aircraft: game.fleet.map((a) => ({
       registration: a.registration,
-      point: toPoint(a.locationIcao),
+      point: a.offField ? offPoint(a.offField) : toPoint(a.locationIcao),
     })),
     availableMissions: game.availableMissions.map((m) => ({
       id: m.id,

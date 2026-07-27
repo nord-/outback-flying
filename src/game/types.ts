@@ -8,6 +8,14 @@ export interface Airport {
   lat: number
   lon: number
   isBase: boolean // major hub where missions tend to originate
+  fuelTypes: FuelType[] // which fuel types the field offers; [] = no fuel
+  fuelPriceMult: number // multiplier over the region's market fuel price (1.0 = hub)
+}
+
+/** A raw coordinate for positions that aren't a catalogued airport (D9). */
+export interface GeoPos {
+  lat: number
+  lon: number
 }
 
 export interface AircraftSpec {
@@ -37,6 +45,11 @@ export interface OwnedAircraft {
   hoursFlown: number
   condition: number // 0..100, airworthiness / wear
   locationIcao: string // where the aircraft currently sits
+  fuelL: number // current fuel in tank, litres
+  // Set => the aircraft is parked at these coordinates, NOT at locationIcao
+  // (which then only anchors the "Off-field, N nm from X" display). Cleared
+  // when the aircraft next shuts down at a catalogued field or is ferried out.
+  offField?: GeoPos
 }
 
 export type MissionType =
@@ -138,6 +151,7 @@ export interface FlightLog {
   id: string
   day: number // game day it was committed
   missionId?: string // absent = free flight / reposition, not tied to a mission
+  missionIds?: string[] // all missions settled during this chain (D14); missionId kept for old entries
   aircraftId: string
   simAircraftTitle: string // sim TITLE, for the forgiveness audit trail
   simAtcModel: string // sim ATC MODEL, ditto
@@ -160,12 +174,37 @@ export interface FlightLog {
 // the flight is committed).
 export type FlightLogSummary = Omit<FlightLog, 'simAircraftTitle' | 'simAtcModel' | 'track'>
 
+// A contiguous run of engine-legs being assembled into one logbook entry;
+// finalized (→ FlightLog) at disconnect, day advance, or aircraft re-match.
+export interface OpenChain {
+  aircraftId: string
+  startDay: number
+  simAircraftTitle: string
+  simAtcModel: string
+  legs: FlightLeg[]
+  landings: number
+  dutyMinutes: number
+  earnings: number
+  missionIds: string[]
+  track: TrackPoint[]
+}
+
+// A mission "underway" between off-block and its destination stop, tagged
+// with the aircraft that armed it — settlement only pays out to that same
+// aircraft, so a different aircraft merely passing through the destination
+// can't collect a reward it didn't carry the mission for (#22 review).
+export interface ArmedMission {
+  missionId: string
+  aircraftId: string
+}
+
 export interface GameState {
   version: number
   companyName: string
   regionId: string // world region this station operates in
   homeBaseIcao: string // operation's home base (RFDS-style); default YBAS
   pilotLocationIcao: string // where the single pilot currently is
+  pilotOffField?: GeoPos // set => the pilot is at coordinates, not pilotLocationIcao
   balance: number
   reputation: number // 0..100
   day: number
@@ -176,6 +215,8 @@ export interface GameState {
   ledger: LedgerEntry[]
   flightLogs: FlightLogSummary[]
   dutyLog: DutyEntry[]
+  armedMissions: ArmedMission[] // accepted missions currently "underway" (armed at off-block/stop — D8)
+  openChain?: OpenChain
   stats: {
     missionsCompleted: number
     missionsFailed: number
