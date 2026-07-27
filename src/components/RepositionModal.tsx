@@ -9,7 +9,8 @@ import {
   suggestedBlockMinutes,
   suggestedFuelLitres,
 } from '../game/economy'
-import { money, FUEL_LABEL } from '../game/format'
+import { fieldSuitability, requiredRunwayM, MARGIN_OK } from '../game/fields'
+import { money, fieldSummary, FUEL_LABEL } from '../game/format'
 import { computeDutyMinutes } from '../game/flightlog'
 import { wouldBeOver, isOverAnyLimit } from '../game/duty'
 import type { OwnedAircraft } from '../game/types'
@@ -55,6 +56,14 @@ export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft
   const dutyAlreadyOver = isOverAnyLimit(game.dutyLog, game.day)
   const dutyWouldExceed = wouldBeOver(game.dutyLog, game.day, ferryDutyEst)
 
+  const suitability = dest ? fieldSuitability(dest.a, spec) : null
+  // The runway needed to clear the *current* band: the short-threshold when
+  // short, but the ok-threshold when merely marginal — otherwise the copy
+  // reads as self-contradictory ("has 863 m, wants 863 m" while still warning).
+  const wantsM = dest
+    ? Math.round(requiredRunwayM(spec, dest.a.surface) * (suitability === 'marginal' ? MARGIN_OK : 1))
+    : 0
+
   const submit = () => {
     const res = reposition(aircraft.id, toIcao, Math.round(Number(block)), Math.round(Number(fuel)))
     if (!res.ok) return setErr(res.message)
@@ -80,7 +89,7 @@ export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft
             <select value={toIcao} onChange={(e) => setToIcao(e.target.value)}>
               {destinations.map((d) => (
                 <option key={d.a.icao} value={d.a.icao}>
-                  {d.a.icao} {d.a.name} — {d.dist} nm
+                  {d.a.icao} {d.a.name} — {d.dist} nm · {fieldSummary(d.a)}
                 </option>
               ))}
             </select>
@@ -104,6 +113,21 @@ export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft
                 ⚠ {dutyAlreadyOver
                   ? 'You are already over a duty-time limit — this ferry adds to it.'
                   : 'This ferry will put you over a duty-time limit.'}
+              </div>
+            )}
+            {dest && suitability && suitability !== 'ok' && (
+              <div
+                className="tiny"
+                style={{
+                  color: suitability === 'short' ? 'var(--red)' : 'var(--amber)',
+                  marginTop: 6,
+                }}
+              >
+                ⚠ {dest.a.icao} has {dest.a.runwayM} m of {dest.a.surface}; {spec.name} wants{' '}
+                {wantsM} m.{' '}
+                {suitability === 'short'
+                  ? 'Too short — expect heavy wear on landing.'
+                  : 'Marginal — expect some extra wear.'}
               </div>
             )}
           </div>

@@ -1,4 +1,4 @@
-import type { FuelType, Urgency } from './types'
+import type { Airport, FuelType, Urgency } from './types'
 
 /** Display labels for fuel types. The stored enum value stays `JETA`; only the UI reads `JET A1`. */
 export const FUEL_LABEL: Record<FuelType, string> = {
@@ -25,4 +25,15 @@ export const URGENCY_LABEL: Record<Urgency, string> = {
   ROUTINE: 'Routine',
   PRIORITY: 'Priority',
   EMERGENCY: 'Emergency',
+}
+
+/**
+ * "1240 m gravel" — the field's physical facts, for any decision UI.
+ * Deliberately omits lighting: OurAirports reports no lighting for all four
+ * runways at PAFA Fairbanks International, so the `lighted` field is not
+ * trustworthy enough to show the player as fact. It stays on `Airport` for
+ * when a better source exists, it just isn't displayed here for now.
+ */
+export function fieldSummary(a: Airport): string {
+  return `${a.runwayM} m ${a.surface}`
 }

@@ -116,8 +116,12 @@ export function OperationsMap() {
             <CircleMarker
               key={a.icao}
               center={ll(a)}
-              radius={2.5}
-              pathOptions={{ color: '#64748b', weight: 0, fillOpacity: 0.5 }}
+              radius={a.type === 'hub' ? 4 : a.type === 'strip' ? 2 : 2.5}
+              pathOptions={
+                a.type === 'strip'
+                  ? { color: '#e08a3c', weight: 1, fillOpacity: 0 }
+                  : { color: '#64748b', weight: 0, fillOpacity: 0.5 }
+              }
             >
               <Tooltip>{a.icao} · {a.name}</Tooltip>
             </CircleMarker>

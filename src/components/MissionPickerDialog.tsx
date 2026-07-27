@@ -1,7 +1,7 @@
 import { useGame } from '../game/store'
 import { getAirport } from '../data/airports'
 import { missionsAtAirport } from '../game/mapView'
-import { money } from '../game/format'
+import { money, fieldSummary } from '../game/format'
 
 export function MissionPickerDialog({
   icao,
@@ -25,6 +25,9 @@ export function MissionPickerDialog({
           <button className="close-x" onClick={onClose}>×</button>
         </div>
         <div className="m-body">
+          <p className="tiny muted" style={{ margin: '2px 0 8px' }}>
+            {airport.icao} {airport.name} — {fieldSummary(airport)}
+          </p>
           {missions.length === 0 ? (
             <div className="empty">No missions touch this airport right now.</div>
           ) : (

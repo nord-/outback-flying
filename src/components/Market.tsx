@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useGame } from '../game/store'
 import { AIRCRAFT_SPECS } from '../data/aircraft'
-import { basesInRegion } from '../data/airports'
+import { hubsInRegion } from '../data/airports'
 import { useUI } from './ui'
 import { money, FUEL_LABEL } from '../game/format'
 
@@ -9,7 +9,7 @@ export function Market() {
   const game = useGame((s) => s.game)!
   const buy = useGame((s) => s.buyAircraft)
   const { notify } = useUI()
-  const bases = basesInRegion(game.regionId)
+  const bases = hubsInRegion(game.regionId)
   const [base, setBase] = useState(bases[0].icao)
 
   return (

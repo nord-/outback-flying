@@ -11,7 +11,8 @@ import {
   suggestedBlockMinutes,
   suggestedFuelLitres,
 } from '../game/economy'
-import { money, signedMoney, FUEL_LABEL } from '../game/format'
+import { fieldSuitability, requiredRunwayM, MARGIN_OK } from '../game/fields'
+import { money, signedMoney, fieldSummary, FUEL_LABEL } from '../game/format'
 import type { Mission } from '../game/types'
 
 export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () => void }) {
@@ -102,6 +103,14 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
     (a) => session.aircraftId === a.id && session.phase === 'SIM_ACTIVE' && a.locationIcao === mission.fromIcao
   )
 
+  const suitability = selected ? fieldSuitability(to, selected.spec) : null
+  // The runway needed to clear the *current* band: the short-threshold when
+  // short, but the ok-threshold when merely marginal — otherwise the copy
+  // reads as self-contradictory ("has 863 m, wants 863 m" while still warning).
+  const wantsM = selected
+    ? Math.round(requiredRunwayM(selected.spec, to.surface) * (suitability === 'marginal' ? MARGIN_OK : 1))
+    : 0
+
   return (
     <div className="overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -116,6 +125,7 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
             <span><b>{mission.distanceNm}</b> nm</span>
             <span>Seats needed <b>{mission.seatsRequired}</b></span>
             <span>Reward <b className="reward">{money(mission.reward)}</b></span>
+            <span>{to.icao} <b>{fieldSummary(to)}</b></span>
           </div>
 
           {eligible.length === 0 ? (
@@ -174,6 +184,21 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
                     ⚠ {dutyAlreadyOver
                       ? 'You are already over a duty-time limit — this flight earns no reward.'
                       : 'This flight will put you over a duty-time limit — 50% of the reward will be withheld.'}
+                  </div>
+                )}
+                {selected && suitability && suitability !== 'ok' && (
+                  <div
+                    className="tiny"
+                    style={{
+                      color: suitability === 'short' ? 'var(--red)' : 'var(--amber)',
+                      marginTop: 6,
+                    }}
+                  >
+                    ⚠ {to.icao} has {to.runwayM} m of {to.surface}; {selected.spec.name} wants{' '}
+                    {wantsM} m.{' '}
+                    {suitability === 'short'
+                      ? 'Too short — expect heavy wear on landing.'
+                      : 'Marginal — expect some extra wear.'}
                   </div>
                 )}
               </div>

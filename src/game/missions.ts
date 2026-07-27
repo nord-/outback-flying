@@ -1,4 +1,4 @@
-import { airportsInRegion, basesInRegion, getAirport } from '../data/airports'
+import { airportsInRegionOfTypes, getAirport } from '../data/airports'
 import { distanceNm } from './geo'
 import {
   computeReward,
@@ -6,7 +6,7 @@ import {
   TIME_CRITICAL_MAX_DISTANCE_NM,
   TIME_CRITICAL_REWARD_MULT,
 } from './economy'
-import type { AircraftSpec, Airport, Mission, MissionType, Urgency } from './types'
+import type { AircraftSpec, Airport, FieldType, Mission, MissionType, Urgency } from './types'
 
 let seq = 0
 const uid = (prefix: string) => `${prefix}_${Date.now().toString(36)}_${(seq++).toString(36)}`
@@ -15,12 +15,20 @@ function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]
 }
 
+interface EndpointRule {
+  from: readonly FieldType[] // allowed origin tiers
+  to: readonly FieldType[] // allowed destination tiers
+  originBias?: FieldType // tier favoured when picking the origin (70%)
+  destBias?: FieldType // tier favoured when picking the destination (70%)
+}
+
 interface TypeConfig {
   type: MissionType
   label: string
   seats: [number, number] // inclusive range
   weight: number
-  narratives: string[]
+  endpoints: EndpointRule
+  narratives: readonly { text: string; tiers?: readonly FieldType[] }[]
 }
 
 const TYPE_CONFIG: TypeConfig[] = [
@@ -29,10 +37,13 @@ const TYPE_CONFIG: TypeConfig[] = [
     label: 'Medical evacuation',
     seats: [1, 2],
     weight: 3,
+    endpoints: { from: ['regional', 'strip'], to: ['hub', 'regional'], originBias: 'strip' },
     narratives: [
-      'A serious workplace injury at a remote site needs urgent evacuation to hospital.',
-      'A road accident on an isolated route has left a patient in a critical condition.',
-      'A child in a remote community has suspected appendicitis and must reach a hospital.',
+      { text: 'A serious workplace injury at a remote site needs urgent evacuation to hospital.' },
+      { text: 'A road accident on an isolated route has left a patient in a critical condition.' },
+      {
+        text: 'A child in a remote community has suspected appendicitis and must reach a hospital.',
+      },
     ],
   },
   {
@@ -40,9 +51,25 @@ const TYPE_CONFIG: TypeConfig[] = [
     label: 'Doctor transport',
     seats: [1, 3],
     weight: 2,
+    endpoints: {
+      from: ['hub', 'regional'],
+      to: ['hub', 'regional', 'strip'],
+      originBias: 'hub',
+      destBias: 'strip',
+    },
     narratives: [
-      'A doctor must be flown out to assess an unwell patient in an isolated settlement.',
-      'An emergency physician is needed at a small community clinic overnight.',
+      {
+        text: 'A doctor must be flown out to assess an unwell patient in an isolated settlement.',
+        tiers: ['regional', 'strip'],
+      },
+      {
+        text: 'An emergency physician is needed at a small community clinic overnight.',
+        tiers: ['regional', 'strip'],
+      },
+      {
+        text: 'A specialist doctor is needed to consult on a case at the regional hospital.',
+        tiers: ['hub'],
+      },
     ],
   },
   {
@@ -50,9 +77,13 @@ const TYPE_CONFIG: TypeConfig[] = [
     label: 'Patient transfer',
     seats: [1, 4],
     weight: 2,
+    endpoints: { from: ['hub', 'regional'], to: ['hub', 'regional'] },
     narratives: [
-      'A stable patient needs transfer to a larger hospital for specialist care.',
-      'A recovering patient is being repatriated closer to family.',
+      {
+        text: 'A stable patient needs transfer to a larger hospital for specialist care.',
+        tiers: ['hub'],
+      },
+      { text: 'A recovering patient is being repatriated closer to family.', tiers: ['regional'] },
     ],
   },
   {
@@ -60,9 +91,21 @@ const TYPE_CONFIG: TypeConfig[] = [
     label: 'Supply run',
     seats: [0, 2],
     weight: 2,
+    endpoints: {
+      from: ['hub', 'regional'],
+      to: ['hub', 'regional', 'strip'],
+      originBias: 'hub',
+      destBias: 'strip',
+    },
     narratives: [
-      'Medical supplies and vaccines must be delivered to a remote clinic.',
-      'Blood products are urgently required at a regional hospital.',
+      {
+        text: 'Medical supplies and vaccines must be delivered to a remote clinic.',
+        tiers: ['regional', 'strip'],
+      },
+      {
+        text: 'Blood products are urgently required at a regional hospital.',
+        tiers: ['hub', 'regional'],
+      },
     ],
   },
   {
@@ -70,9 +113,18 @@ const TYPE_CONFIG: TypeConfig[] = [
     label: 'Clinic flight',
     seats: [2, 5],
     weight: 1,
+    endpoints: {
+      from: ['hub', 'regional'],
+      to: ['hub', 'regional', 'strip'],
+      originBias: 'hub',
+      destBias: 'strip',
+    },
     narratives: [
-      'A routine fly-in clinic run: transport a small health team to a remote settlement.',
-      'A scheduled immunisation clinic needs its team flown out and back.',
+      {
+        text: 'A routine fly-in clinic run: transport a small health team to a remote settlement.',
+        tiers: ['regional', 'strip'],
+      },
+      { text: 'A scheduled immunisation clinic needs its team flown out and back.' },
     ],
   },
   {
@@ -80,9 +132,18 @@ const TYPE_CONFIG: TypeConfig[] = [
     label: 'Organ transport',
     seats: [0, 1],
     weight: 1,
+    // Hospital to hospital: a regional hospital can transplant either way, so
+    // both ends are hub | regional and neither end is biased.
+    endpoints: { from: ['hub', 'regional'], to: ['hub', 'regional'] },
+    // No `tiers` hints needed: `to` is already hub | regional, so no narrative
+    // can contradict the destination's tier.
     narratives: [
-      'A donor organ has been matched — it must reach the transplant team before it perishes.',
-      'A time-critical tissue transfer: a courier and an esky, and a clock that started at retrieval.',
+      {
+        text: 'A donor organ has been matched — it must reach the transplant team before it perishes.',
+      },
+      {
+        text: 'A time-critical tissue transfer: a courier and an esky, and a clock that started at retrieval.',
+      },
     ],
   },
   {
@@ -90,9 +151,16 @@ const TYPE_CONFIG: TypeConfig[] = [
     label: 'Emergency medevac',
     seats: [4, 6],
     weight: 1,
+    // A medevac does not begin at a major hub — the hospital is already there.
+    // Same shape as MEDEVAC: out in the region, in to a hospital.
+    endpoints: { from: ['regional', 'strip'], to: ['hub', 'regional'], originBias: 'strip' },
     narratives: [
-      'A critical patient must be stretchered out with a medical escort — every minute counts.',
-      'A remote-clinic emergency needs a fast evacuation with room for a stretcher and a medic.',
+      {
+        text: 'A critical patient must be stretchered out with a medical escort — every minute counts.',
+      },
+      {
+        text: 'A remote-clinic emergency needs a fast evacuation with room for a stretcher and a medic.',
+      },
     ],
   },
 ]
@@ -167,25 +235,96 @@ interface DestinationCandidate {
   distance: number
 }
 
-function otherAirportsByDistance(from: Airport, regionId: string): DestinationCandidate[] {
-  return airportsInRegion(regionId)
+/** Candidates of the allowed tiers, nearest first. */
+function candidatesByDistance(
+  from: Airport,
+  regionId: string,
+  tiers: readonly FieldType[]
+): DestinationCandidate[] {
+  return airportsInRegionOfTypes(regionId, tiers)
     .filter((a) => a.icao !== from.icao)
     .map((airport) => ({ airport, distance: distanceNm(from, airport) }))
     .sort((a, b) => a.distance - b.distance)
 }
 
 /**
- * Picks a destination within [MIN_DISTANCE_NM, maxDist] of `from`. Some
- * origins have no airport in that window at all once a slow fleet caps
- * maxDist (e.g. Alice Springs has none within 240nm) — falling back to the
- * nearest airport beyond MIN_DISTANCE_NM keeps the mission valid (distinct,
- * non-trivial distance) even if it runs longer than the target flight time.
+ * Picks a destination of an allowed tier within [MIN_DISTANCE_NM, maxDist],
+ * favouring `destBias` when that tier has candidates in the window. Falls
+ * back to the candidate closest to the window (smallest overshoot past
+ * maxDist, or smallest shortfall below MIN_DISTANCE_NM) when the window
+ * itself is empty — which the origin feasibility filter below makes rare.
  */
-function pickDestination(from: Airport, maxDist: number, regionId: string): DestinationCandidate {
-  const byDistance = otherAirportsByDistance(from, regionId)
+function pickDestination(
+  from: Airport,
+  maxDist: number,
+  regionId: string,
+  rule: EndpointRule
+): DestinationCandidate {
+  const byDistance = candidatesByDistance(from, regionId, rule.to)
   const inWindow = byDistance.filter((c) => c.distance >= MIN_DISTANCE_NM && c.distance <= maxDist)
-  if (inWindow.length > 0) return pick(inWindow)
-  return byDistance.find((c) => c.distance >= MIN_DISTANCE_NM) ?? byDistance[0]
+  if (inWindow.length > 0) {
+    const biased = rule.destBias ? inWindow.filter((c) => c.airport.type === rule.destBias) : []
+    if (biased.length > 0 && Math.random() < 0.7) return pick(biased)
+    return pick(inWindow)
+  }
+  // The window is empty, so candidates split into a too-close prefix and a
+  // too-far suffix (sorted ascending, nothing lands in between) — pick
+  // whichever edge is nearer the window rather than blindly preferring
+  // "beyond MIN" and risking a leg arbitrarily longer than maxDist allows.
+  const tooClose = byDistance.filter((c) => c.distance < MIN_DISTANCE_NM)
+  const tooFar = byDistance.filter((c) => c.distance > maxDist)
+  const nearestClose = tooClose[tooClose.length - 1]
+  const nearestFar = tooFar[0]
+  if (nearestClose && nearestFar) {
+    const shortfall = MIN_DISTANCE_NM - nearestClose.distance
+    const overshoot = nearestFar.distance - maxDist
+    return shortfall <= overshoot ? nearestClose : nearestFar
+  }
+  return nearestClose ?? nearestFar ?? byDistance[0]
+}
+
+/**
+ * Origins that can actually be served: at least one allowed destination inside
+ * the distance window. Without this, pickDestination's fallback quietly hands
+ * out legs far longer than the type's cap allows.
+ */
+function feasibleOrigins(
+  regionId: string,
+  maxDist: number,
+  rule: EndpointRule,
+  cache?: Map<string, Airport[]>
+): Airport[] {
+  const key = `${regionId}|${maxDist}|${rule.from.join(',')}|${rule.to.join(',')}`
+  const cached = cache?.get(key)
+  if (cached) return cached
+
+  const candidates = airportsInRegionOfTypes(regionId, rule.from)
+  const destinations = airportsInRegionOfTypes(regionId, rule.to)
+  const servable = candidates.filter((from) =>
+    destinations.some((to) => {
+      if (to.icao === from.icao) return false
+      const d = distanceNm(from, to)
+      return d >= MIN_DISTANCE_NM && d <= maxDist
+    })
+  )
+  // Never strand generation: a pathologically sparse region falls back to the
+  // unfiltered set, and pickDestination's own fallback then applies.
+  const origins = servable.length > 0 ? servable : candidates
+  cache?.set(key, origins)
+  return origins
+}
+
+function pickOrigin(
+  regionId: string,
+  maxDist: number,
+  rule: EndpointRule,
+  cache?: Map<string, Airport[]>
+): Airport {
+  const origins = feasibleOrigins(regionId, maxDist, rule, cache)
+  if (origins.length === 0) throw new Error(`No usable origin in region: ${regionId}`)
+  const biased = rule.originBias ? origins.filter((a) => a.type === rule.originBias) : []
+  if (biased.length > 0 && Math.random() < 0.7) return pick(biased)
+  return pick(origins)
 }
 
 /** Generate a single mission valid on the given day, scaled by reputation and current fleet. */
@@ -193,19 +332,18 @@ export function generateMission(
   day: number,
   reputation: number,
   fleetSpecs: AircraftSpec[] = [],
-  regionId: string
+  regionId: string,
+  originCache?: Map<string, Airport[]>
 ): Mission {
   const cfg = weightedType(fleetSpecs)
   const timeCritical = TIME_CRITICAL_TYPES.has(cfg.type)
   const fleetMax = maxDistanceForFleet(fleetSpecs)
   const maxDist = timeCritical ? Math.min(fleetMax, TIME_CRITICAL_MAX_DISTANCE_NM) : fleetMax
 
-  // Origin favours bases; destination is any other airport in-region within range.
-  const airports = airportsInRegion(regionId)
-  if (airports.length === 0) throw new Error(`No airports in region: ${regionId}`)
-  const bases = basesInRegion(regionId)
-  const from = Math.random() < 0.7 && bases.length ? pick(bases) : pick(airports)
-  const { airport: to, distance: dist } = pickDestination(from, maxDist, regionId)
+  // Both endpoints stay inside the tiers the mission type allows, and the origin
+  // must have at least one allowed destination inside the distance window.
+  const from = pickOrigin(regionId, maxDist, cfg.endpoints, originCache)
+  const { airport: to, distance: dist } = pickDestination(from, maxDist, regionId, cfg.endpoints)
 
   const maxSeats = maxSeatsForFleet(fleetSpecs)
   const hi = Math.min(cfg.seats[1], maxSeats)
@@ -218,11 +356,16 @@ export function generateMission(
   const repReward =
     urgency === 'EMERGENCY' ? randInt(3, 5) : urgency === 'PRIORITY' ? randInt(2, 3) : randInt(1, 2)
 
+  // The narrative is chosen after the destination, so its wording matches the
+  // tier actually flown to; an empty filter falls back to the whole list.
+  const fitting = cfg.narratives.filter((n) => !n.tiers || n.tiers.includes(to.type))
+  const narrative = pick(fitting.length > 0 ? [...fitting] : [...cfg.narratives])
+
   return {
     id: uid('m'),
     type: cfg.type,
     title: `${cfg.label}: ${from.name} → ${to.name}`,
-    description: pick(cfg.narratives),
+    description: narrative.text,
     fromIcao: from.icao,
     toIcao: to.icao,
     distanceNm: Math.round(dist),
@@ -245,7 +388,11 @@ export function generateMissions(
   fleetSpecs: AircraftSpec[] = [],
   regionId: string
 ): Mission[] {
-  return Array.from({ length: count }, () => generateMission(day, reputation, fleetSpecs, regionId))
+  // The feasibility filter is O(origins × destinations); one cache per board refill.
+  const originCache = new Map<string, Airport[]>()
+  return Array.from({ length: count }, () =>
+    generateMission(day, reputation, fleetSpecs, regionId, originCache)
+  )
 }
 
 export const missionTypeLabel = (t: MissionType): string =>

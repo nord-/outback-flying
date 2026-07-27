@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { REGIONS, getRegion } from './regions'
-import { AIRPORTS, airportsInRegion, basesInRegion, getAirport } from './airports'
+import { AIRPORTS, airportsInRegion, getAirport, hubsInRegion } from './airports'
 
 describe('regions', () => {
   it('every airport is tagged with a known region', () => {
@@ -11,10 +11,10 @@ describe('regions', () => {
   it('each region has airports, at least one base, and a valid home base in-region', () => {
     for (const r of REGIONS) {
       expect(airportsInRegion(r.id).length).toBeGreaterThan(0)
-      expect(basesInRegion(r.id).length).toBeGreaterThan(0)
+      expect(hubsInRegion(r.id).length).toBeGreaterThan(0)
       const home = getAirport(r.homeBaseIcao)
       expect(home.region).toBe(r.id)
-      expect(home.isBase).toBe(true)
+      expect(home.type).toBe('hub')
     }
   })
 

@@ -128,3 +128,17 @@ describe('missionsAtAirport', () => {
     expect(missionsAtAirport(game(), 'YBAS')).toEqual([])
   })
 })
+
+describe('MapPoint type tier', () => {
+  it('carries the field tier out to every airport point', () => {
+    const view = deriveMapView(game())
+    for (const p of view.airports) {
+      expect(['hub', 'regional', 'strip']).toContain(p.type)
+    }
+  })
+
+  it('marks off-field points with a null tier', () => {
+    const off = { ...game(), pilotOffField: { lat: -24, lon: 134 } }
+    expect(deriveMapView(off).pilot.type).toBeNull()
+  })
+})

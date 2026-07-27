@@ -29,6 +29,7 @@ import {
   maintenanceCost,
   refuelCost,
 } from './economy'
+import { landingWear } from './fields'
 
 const SAVE_VERSION = 10 // v7 = fuel tanks; v8 = always-on sim tracking (#20); v9 = per-aircraft armed missions (#22 review); v10 = time-critical missions (#11), no migration
 const SAVE_KEY = 'outback-flying-save'
@@ -565,7 +566,12 @@ export const useGame = create<Store>()(
 
         // Aircraft wear, fuel draw-down and relocation.
         ac.hoursFlown = +(ac.hoursFlown + report.blockMinutes / 60).toFixed(2)
-        ac.condition = clamp(+(ac.condition - conditionLoss(report.blockMinutes)).toFixed(2), 0, 100)
+        const arrivalWear = landingWear(getAirport(mission.toIcao), spec)
+        ac.condition = clamp(
+          +(ac.condition - conditionLoss(report.blockMinutes) - arrivalWear).toFixed(2),
+          0,
+          100
+        )
         ac.fuelL = Math.max(0, +(ac.fuelL - report.fuelLitres).toFixed(2))
         ac.locationIcao = mission.toIcao
         g.pilotLocationIcao = mission.toIcao
@@ -592,6 +598,10 @@ export const useGame = create<Store>()(
         set({ game: g, operator })
         const net = mission.reward - withheld - maint - (onTime ? 0 : mission.penalty)
         const dryNote = dry ? ' Tank ran dry — a fuel stop was needed.' : ''
+        const wearNote =
+          arrivalWear > 0
+            ? ` Rough field at ${mission.toIcao} — extra wear ${arrivalWear.toFixed(2)}%.`
+            : ''
         return {
           ok: true,
           onTime,
@@ -604,7 +614,8 @@ export const useGame = create<Store>()(
               ? `Mission complete. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`
               : `Completed late — reputation and a penalty applied. Net ${net >= 0 ? '+' : ''}$${net.toLocaleString()}. +${xp} XP.`) +
             (withheld > 0 ? ` ⚠ Duty-time violation: ${dutyFactor === 0 ? '100%' : '50%'} of the reward withheld.` : '') +
-            dryNote,
+            dryNote +
+            wearNote,
         }
       },
 
@@ -622,7 +633,12 @@ export const useGame = create<Store>()(
 
         post(g, 'MAINTENANCE', `Maintenance — ${ac.registration}`, -maint)
         ac.hoursFlown = +(ac.hoursFlown + blockMinutes / 60).toFixed(2)
-        ac.condition = clamp(+(ac.condition - conditionLoss(blockMinutes)).toFixed(2), 0, 100)
+        const arrivalWear = landingWear(getAirport(toIcao), spec)
+        ac.condition = clamp(
+          +(ac.condition - conditionLoss(blockMinutes) - arrivalWear).toFixed(2),
+          0,
+          100
+        )
         ac.fuelL = Math.max(0, +(ac.fuelL - fuelLitres).toFixed(2))
         ac.locationIcao = toIcao
         delete ac.offField
@@ -635,7 +651,10 @@ export const useGame = create<Store>()(
         set({ game: g })
         return {
           ok: true,
-          message: `Repositioned ${ac.registration} to ${toIcao}. Cost $${maint.toLocaleString()}.${dry ? ' Tank ran dry — a fuel stop was needed.' : ''}`,
+          message:
+            `Repositioned ${ac.registration} to ${toIcao}. Cost $${maint.toLocaleString()}.` +
+            (dry ? ' Tank ran dry — a fuel stop was needed.' : '') +
+            (arrivalWear > 0 ? ` Rough field — extra wear ${arrivalWear.toFixed(2)}%.` : ''),
         }
       },
 
@@ -778,7 +797,17 @@ export const useGame = create<Store>()(
         const maint = maintenanceCost(input.leg.blockMinutes, spec.maintPerHour)
         post(g, 'MAINTENANCE', `Maintenance — ${ac.registration}`, -maint)
         ac.hoursFlown = +(ac.hoursFlown + input.leg.blockMinutes / 60).toFixed(2)
-        ac.condition = clamp(+(ac.condition - conditionLoss(input.leg.blockMinutes)).toFixed(2), 0, 100)
+        // Landing wear only where we have runway data — an off-field shutdown
+        // has none, even though it is the roughest surface of all (B10).
+        const arrivalWear = 'icao' in input.pos ? landingWear(getAirport(input.pos.icao), spec) : 0
+        ac.condition = clamp(
+          +(ac.condition - conditionLoss(input.leg.blockMinutes) - arrivalWear).toFixed(2),
+          0,
+          100
+        )
+        if (arrivalWear > 0 && 'icao' in input.pos) {
+          messages.push(`Rough field at ${input.pos.icao} — extra wear ${arrivalWear.toFixed(2)}%.`)
+        }
         g.stats.hoursFlown = +(g.stats.hoursFlown + input.leg.blockMinutes / 60).toFixed(2)
         const firstToday = !g.dutyLog.some((e) => e.day === g.day)
         const dutyMinutes = Math.round(input.leg.blockMinutes + 30 + (firstToday ? 30 : 0))
