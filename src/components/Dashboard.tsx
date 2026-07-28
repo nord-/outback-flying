@@ -26,6 +26,9 @@ export function Dashboard() {
   return (
     <div>
       <h2 className="page-title">Operations overview</h2>
+      <div className="mb">
+        <OperationsMap />
+      </div>
       {session.phase === 'SIM_ACTIVE' && sample && liveAc && (
         <div className="card mb">
           <div className="spread">
@@ -137,10 +140,6 @@ export function Dashboard() {
             </div>
           )}
         </div>
-      </div>
-
-      <div className="mt">
-        <OperationsMap />
       </div>
     </div>
   )
