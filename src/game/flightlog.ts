@@ -9,7 +9,7 @@
 // (src/sim/useSimSession.ts) folds live samples one at a time, committing each
 // closed leg to the store via `commitLeg` (src/game/store.ts) as it lands —
 // there is no separate offline "finish recording" step (D15).
-import type { Airport, FlightLeg, TrackPoint, AircraftSpec } from './types'
+import type { Airport, FlightLeg, FlightLogSummary, TrackPoint, AircraftSpec } from './types'
 import type { SimSample } from '../sim/types'
 import { airportsInRegion } from '../data/airports'
 import { distanceNm, bearingDeg, toRad, EARTH_RADIUS_NM, type LatLon } from './geo'
@@ -31,6 +31,36 @@ const DEFAULT_SIMPLIFY_EPSILON_NM = 0.05 // ~90 m — invisible at map scale
 // real second — comfortably covering the "reset back near the departure
 // field" scenario the guard exists for.
 export const MAX_PLAUSIBLE_KTS = 1_000_000
+
+// A simulator that unloads its aircraft (returning to the menu, shutting down)
+// keeps streaming for a moment with every SimVar reading ~0 — a position in the
+// Gulf of Guinea that no flight in any catalogued region can legitimately
+// occupy. It is NOT exactly 0,0 (the real save that produced issue #28 recorded
+// 0.000407, 0.013975), so this is a radius, not an equality check.
+export const NULL_ISLAND_RADIUS_NM = 10
+
+/** False for a coordinate that cannot describe a real aircraft position. */
+export function isPlausiblePosition(lat: number, lon: number): boolean {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return false
+  return distanceNm({ lat, lon }, { lat: 0, lon: 0 }) > NULL_ISLAND_RADIUS_NM
+}
+
+/** False for a live sample that cannot describe a real aircraft state — the
+ *  gate `reduceSession` applies before a sample is allowed to touch anything. */
+export function isPlausibleSample(s: SimSample): boolean {
+  return (
+    Number.isFinite(s.t) &&
+    Number.isFinite(s.fuelGal) &&
+    Number.isFinite(s.groundKts) &&
+    Number.isFinite(s.altFt) &&
+    // headingTrue is copied into every TrackPoint, and fuelCapacityGal feeds
+    // simCapacityL — which the fleet card and the refuel modal both divide by.
+    Number.isFinite(s.headingTrue) &&
+    Number.isFinite(s.fuelCapacityGal) &&
+    isPlausiblePosition(s.lat, s.lon)
+  )
+}
 
 const round2 = (n: number): number => Math.round(n * 100) / 100
 
@@ -97,6 +127,50 @@ export function simCapacityL(spec: AircraftSpec, sample: SimSample | null): numb
  *  landing). One leg → 2 stops → +60 min; two legs → 3 stops → +90 min. */
 export function computeDutyMinutes(blockMinutes: number, legCount: number): number {
   return blockMinutes + 30 * (legCount + 1)
+}
+
+// No aircraft in the catalogue cruises anywhere near this. A leg claiming to
+// have covered ground faster was not flown — it is the position discontinuity
+// left by a sim unloading its aircraft (#28), recorded before the sample guard
+// above existed.
+export const MAX_LOG_LEG_KTS = 1000
+
+function isFlyableLeg(l: FlightLeg): boolean {
+  if (l.distanceNm === 0) return true // standing still is not a teleport
+  if (!(l.distanceNm > 0)) return false // non-finite or negative distance is corrupt, not flight
+  if (!(l.blockMinutes > 0)) return false // distance covered in no time at all
+  return l.distanceNm / (l.blockMinutes / 60) <= MAX_LOG_LEG_KTS
+}
+
+/**
+ * Remove legs that cannot describe real flight from a recorded summary and
+ * re-derive the totals from what is left. Returns the SAME object when nothing
+ * was dropped (so a migration can skip untouched entries), and `null` when no
+ * leg survives — the caller should then drop the entry entirely.
+ *
+ * `landings`, `dutyMinutes` and `earnings` are deliberately preserved: none of
+ * them can be re-derived from leg data, and guessing would be worse than
+ * leaving a slightly generous figure in a historical record.
+ */
+export function scrubFlightLog(log: FlightLogSummary): FlightLogSummary | null {
+  const legs = log.legs.filter(isFlyableLeg)
+  if (legs.length === log.legs.length) return log
+  if (legs.length === 0) return null
+  const sum = (f: (l: FlightLeg) => number) => +legs.reduce((t, l) => t + f(l), 0).toFixed(2)
+  return {
+    ...log,
+    legs,
+    startIcao: legs[0].fromIcao,
+    endIcao: legs[legs.length - 1].toIcao,
+    intermediates: legs
+      .slice(0, -1)
+      .map((l) => l.toIcao)
+      .filter((i): i is string => i !== null),
+    blockMinutes: sum((l) => l.blockMinutes),
+    flightMinutes: sum((l) => l.flightMinutes),
+    distanceNm: sum((l) => l.distanceNm),
+    fuelUsedL: sum((l) => l.fuelUsedL),
+  }
 }
 
 function sumTrackDistanceNm(points: LatLon[]): number {

@@ -6,6 +6,7 @@ import type { SimSample } from '../sim/types'
 
 const YBAS = AIRPORTS.find((a) => a.icao === 'YBAS')!
 const YTNK = AIRPORTS.find((a) => a.icao === 'YTNK')!
+const OPEN_SEA = { lat: -35, lon: 155 } // plausible, but no catalogued field within tolerance
 
 const sample = (over: Partial<SimSample> = {}): SimSample => ({
   t: 0, lat: YBAS.lat, lon: YBAS.lon, headingTrue: 0, groundKts: 0, altFt: 0,
@@ -44,7 +45,7 @@ describe('session matching (D1/D2)', () => {
   })
 
   it('warns wrong-position at an uncatalogued location', () => {
-    const { effects } = reduceSession(initSessionState(), sample({ lat: 0, lon: 0 }), ctx())
+    const { effects } = reduceSession(initSessionState(), sample(OPEN_SEA), ctx())
     expect(effects.some((e) => e.kind === 'WARN' && e.code === 'wrong-position')).toBe(true)
   })
 
@@ -72,8 +73,8 @@ describe('session matching (D1/D2)', () => {
   })
 
   it('repeats no warning twice for the same condition', () => {
-    const r1 = reduceSession(initSessionState(), sample({ lat: 0, lon: 0 }), ctx())
-    const r2 = reduceSession(r1.state, sample({ lat: 0, lon: 0, t: 1000 }), ctx())
+    const r1 = reduceSession(initSessionState(), sample(OPEN_SEA), ctx())
+    const r2 = reduceSession(r1.state, sample({ ...OPEN_SEA, t: 1000 }), ctx())
     expect(r2.effects.filter((e) => e.kind === 'WARN')).toHaveLength(0)
   })
 })
@@ -265,5 +266,45 @@ describe('fuel authority phases (D3/D7)', () => {
     expect(r2.state.phase).toBe('UNMATCHED')
     expect(r2.state.aircraftId).toBeNull()
     expect(r2.effects.some((e) => e.kind === 'WARN' && e.code === 'aircraft-swapped')).toBe(true)
+  })
+})
+
+describe('implausible samples are dropped (#28)', () => {
+  const NULL_ISLAND = { lat: 0.0004074894422501528, lon: 0.013974503360709429 }
+
+  it('returns the state untouched and emits nothing', () => {
+    const { state: matched } = reduceSession(initSessionState(), sample(), ctx())
+    const { state, effects } = reduceSession(matched, sample({ ...NULL_ISLAND, t: 1000 }), ctx())
+    expect(state).toBe(matched) // same object — nothing was recomputed
+    expect(effects).toEqual([])
+  })
+
+  it('keeps the previous lastSample, which the UI reads as the live position', () => {
+    const { state: matched } = reduceSession(initSessionState(), sample({ t: 500 }), ctx())
+    const { state } = reduceSession(matched, sample({ ...NULL_ISLAND, t: 1000 }), ctx())
+    expect(state.lastSample?.t).toBe(500)
+    expect(state.lastSample?.lat).toBe(YBAS.lat)
+  })
+
+  it('does not close a leg or commit a position when the sim unloads mid-flight', () => {
+    // Airborne out of YBAS, then the sim unloads. The 60-second gap matters:
+    // samples thin out as the sim shuts down, so the implied speed of the jump
+    // stays UNDER MAX_PLAUSIBLE_KTS and recordSample's discontinuity guard does
+    // not fire — exactly what happened in the save that produced #28. Only the
+    // isPlausibleSample gate stops the leg closing at Null Island here.
+    const airborne = reduceSession(
+      initSessionState(),
+      sample({ enginesOn: true, onGround: false, groundKts: 150, altFt: 8000, t: 1000 }),
+      ctx()
+    )
+    expect(airborne.state.phase).toBe('SIM_ACTIVE')
+    const unloaded = reduceSession(
+      airborne.state,
+      sample({ ...NULL_ISLAND, t: 60_000, onGround: true, enginesOn: false, groundKts: 0, altFt: 0, fuelGal: 0 }),
+      ctx()
+    )
+    expect(unloaded.effects).toEqual([])
+    expect(unloaded.state.phase).toBe('SIM_ACTIVE')
+    expect(unloaded.state.recorder?.currentLeg).toBeTruthy() // still open, not closed at 0,0
   })
 })

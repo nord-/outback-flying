@@ -7,12 +7,15 @@ import {
   simplifyTrack,
   initRecorderState,
   recordSample,
+  scrubFlightLog,
   STATIONARY_KTS,
+  isPlausiblePosition,
+  isPlausibleSample,
 } from './flightlog'
 import { getSpec } from '../data/aircraft'
 import { AIRPORTS } from '../data/airports'
 import type { SimSample } from '../sim/types'
-import type { TrackPoint } from './types'
+import type { TrackPoint, FlightLogSummary } from './types'
 
 const YBAS = AIRPORTS.find((a) => a.icao === 'YBAS')!
 const YBHI = AIRPORTS.find((a) => a.icao === 'YBHI')!
@@ -491,5 +494,132 @@ describe('simplifyTrack', () => {
       { t: 1000, lat: YBHI.lat, lon: YBHI.lon, hdg: 0, gs: 0, alt: 0, onGround: true },
     ]
     expect(simplifyTrack(points)).toEqual(points)
+  })
+})
+
+describe('isPlausiblePosition / isPlausibleSample (#28)', () => {
+  const plausible = (over: Partial<SimSample> = {}): SimSample => ({
+    t: 1_000, lat: YBAS.lat, lon: YBAS.lon, headingTrue: 0, groundKts: 0, altFt: 0,
+    onGround: true, fuelGal: 40, fuelCapacityGal: 50, enginesOn: false,
+    title: 'Black Square A36TC Bonanza Professional N3475M', atcModel: 'Bonanza',
+    ...over,
+  })
+
+  it('accepts an ordinary outback position', () => {
+    expect(isPlausiblePosition(YBAS.lat, YBAS.lon)).toBe(true)
+    expect(isPlausibleSample(plausible())).toBe(true)
+  })
+
+  it('rejects exact Null Island', () => {
+    expect(isPlausiblePosition(0, 0)).toBe(false)
+  })
+
+  it('rejects the near-zero position a sim reports while unloading the aircraft', () => {
+    // The exact pair recovered from the real save that produced issue #28 —
+    // ~1.5 km off 0,0, so an equality check would let it through.
+    expect(isPlausiblePosition(0.0004074894422501528, 0.013974503360709429)).toBe(false)
+    expect(isPlausibleSample(plausible({ lat: 0.0004074894422501528, lon: 0.013974503360709429 }))).toBe(false)
+  })
+
+  it('accepts a real position just outside the Null Island radius', () => {
+    // ~11 nm north of 0,0 — inside the Gulf of Guinea but beyond the radius.
+    expect(isPlausiblePosition(11 / 60, 0)).toBe(true)
+  })
+
+  it('rejects out-of-range coordinates', () => {
+    expect(isPlausiblePosition(91, 20)).toBe(false)
+    expect(isPlausiblePosition(-20, 181)).toBe(false)
+  })
+
+  it('rejects non-finite coordinates and telemetry', () => {
+    expect(isPlausiblePosition(NaN, 133)).toBe(false)
+    expect(isPlausiblePosition(-23, Infinity)).toBe(false)
+    expect(isPlausibleSample(plausible({ fuelGal: NaN }))).toBe(false)
+    expect(isPlausibleSample(plausible({ groundKts: Infinity }))).toBe(false)
+    expect(isPlausibleSample(plausible({ altFt: NaN }))).toBe(false)
+    expect(isPlausibleSample(plausible({ t: NaN }))).toBe(false)
+    // headingTrue lands in every TrackPoint; fuelCapacityGal feeds simCapacityL.
+    expect(isPlausibleSample(plausible({ headingTrue: NaN }))).toBe(false)
+    expect(isPlausibleSample(plausible({ fuelCapacityGal: Infinity }))).toBe(false)
+  })
+})
+
+describe('scrubFlightLog (#28)', () => {
+  const summary = (over: Partial<FlightLogSummary> = {}): FlightLogSummary => ({
+    id: 'fl1',
+    day: 1,
+    aircraftId: 'ac1',
+    legs: [],
+    startIcao: 'YBAS',
+    endIcao: 'YBAS',
+    intermediates: [],
+    blockMinutes: 0,
+    flightMinutes: 0,
+    dutyMinutes: 177,
+    distanceNm: 0,
+    fuelUsedL: 0,
+    landings: 2,
+    earnings: -123,
+    ...over,
+  })
+
+  // The two legs recovered from the real save behind issue #28.
+  const realLeg = { fromIcao: 'YBAS', toIcao: 'YBAS', blockMinutes: 85.46, flightMinutes: 67.19, distanceNm: 413.04, fuelUsedL: 191.8 }
+  const nullIslandLeg = { fromIcao: 'YTNK', toIcao: null, blockMinutes: 1.59, flightMinutes: 1.59, distanceNm: 7866.47, fuelUsedL: 0 }
+
+  it('returns a clean log untouched, as the same object', () => {
+    const clean = summary({ legs: [realLeg], blockMinutes: 85.46, distanceNm: 413.04 })
+    expect(scrubFlightLog(clean)).toBe(clean)
+  })
+
+  it('drops a leg whose implied groundspeed is impossible', () => {
+    const dirty = summary({ legs: [realLeg, nullIslandLeg], endIcao: null })
+    const scrubbed = scrubFlightLog(dirty)!
+    expect(scrubbed.legs).toEqual([realLeg])
+  })
+
+  it('re-derives the totals and endpoints from the surviving legs', () => {
+    const second = { fromIcao: 'YKUR', toIcao: 'YCCY', blockMinutes: 7.04, flightMinutes: 5.1, distanceNm: 20.5, fuelUsedL: 12.25 }
+    const dirty = summary({ legs: [realLeg, nullIslandLeg, second], endIcao: 'YCCY' })
+    const scrubbed = scrubFlightLog(dirty)!
+    expect(scrubbed.distanceNm).toBeCloseTo(433.54, 2)
+    expect(scrubbed.blockMinutes).toBeCloseTo(92.5, 2)
+    expect(scrubbed.flightMinutes).toBeCloseTo(72.29, 2)
+    expect(scrubbed.fuelUsedL).toBeCloseTo(204.05, 2)
+    expect(scrubbed.startIcao).toBe('YBAS')
+    expect(scrubbed.endIcao).toBe('YCCY')
+    expect(scrubbed.intermediates).toEqual(['YBAS'])
+  })
+
+  it('leaves landings, duty and earnings alone — they cannot be re-derived', () => {
+    const scrubbed = scrubFlightLog(summary({ legs: [realLeg, nullIslandLeg] }))!
+    expect(scrubbed.landings).toBe(2)
+    expect(scrubbed.dutyMinutes).toBe(177)
+    expect(scrubbed.earnings).toBe(-123)
+  })
+
+  it('returns null when no leg survives', () => {
+    expect(scrubFlightLog(summary({ legs: [nullIslandLeg] }))).toBeNull()
+  })
+
+  it('keeps a zero-distance leg — standing still is not a teleport', () => {
+    const parked = { fromIcao: 'YBAS', toIcao: 'YBAS', blockMinutes: 0, flightMinutes: 0, distanceNm: 0, fuelUsedL: 0 }
+    const log = summary({ legs: [parked] })
+    expect(scrubFlightLog(log)).toBe(log)
+  })
+
+  it('drops a leg with distance covered in no time at all', () => {
+    const instant = { fromIcao: 'YBAS', toIcao: 'YCCY', blockMinutes: 0, flightMinutes: 0, distanceNm: 20.5, fuelUsedL: 0 }
+    const dirty = summary({ legs: [realLeg, instant], endIcao: 'YCCY' })
+    const scrubbed = scrubFlightLog(dirty)!
+    expect(scrubbed.legs).toEqual([realLeg])
+  })
+
+  it('drops a leg with a non-finite or negative distance instead of treating it as parked', () => {
+    const nanLeg = { fromIcao: 'YBAS', toIcao: 'YCCY', blockMinutes: 30, flightMinutes: 25, distanceNm: NaN, fuelUsedL: 10 }
+    const negativeLeg = { fromIcao: 'YBAS', toIcao: 'YCCY', blockMinutes: 30, flightMinutes: 25, distanceNm: -5, fuelUsedL: 10 }
+    const dirty = summary({ legs: [realLeg, nanLeg, negativeLeg], endIcao: 'YCCY' })
+    const scrubbed = scrubFlightLog(dirty)!
+    expect(scrubbed.legs).toEqual([realLeg])
   })
 })

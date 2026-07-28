@@ -13,6 +13,7 @@ import {
   initRecorderState,
   recordSample,
   simplifyTrack,
+  isPlausibleSample,
   GALLONS_TO_LITRES,
   STATIONARY_KTS,
   type RecorderState,
@@ -184,6 +185,12 @@ export function reduceSession(
   sample: SimSample,
   ctx: SessionCtx
 ): { state: SimSessionState; effects: SessionEffect[] } {
+  // A sample the simulator cannot really have produced — in practice the
+  // all-zero read that arrives while it unloads the aircraft (#28). Drop it
+  // whole: the state is returned untouched, INCLUDING lastSample, so it always
+  // holds the most recent trustworthy position for the UI to plot.
+  if (!isPlausibleSample(sample)) return { state, effects: [] }
+
   const effects: SessionEffect[] = []
   let next: SimSessionState = { ...state, lastSample: sample }
 

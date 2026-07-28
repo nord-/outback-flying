@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useGame } from '../game/store'
-import { useSim } from '../sim/useSim'
 import { useSessionState } from '../sim/useSimSession'
 import { getSpec } from '../data/aircraft'
 import { getAirport, airportOffersFuel } from '../data/airports'
@@ -38,8 +37,11 @@ function AircraftCard({
   const game = useGame((s) => s.game)!
   const repair = useGame((s) => s.repairAircraft)
   const sell = useGame((s) => s.sellAircraft)
-  const { sample } = useSim()
   const session = useSessionState()
+  // session.lastSample is the guarded sample (#28); the raw useSim() stream is
+  // deliberately NOT read here — it still carries the sim's shutdown zeros,
+  // which would zero the capacity and the live fuel readout.
+  const sample = session.lastSample
   const spec = getSpec(ac.specId)
   const loc = getAirport(ac.locationIcao)
   const rCost = repairCost(spec.purchaseCost, ac.condition)

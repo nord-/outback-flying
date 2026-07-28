@@ -5,7 +5,6 @@ import 'leaflet/dist/leaflet.css'
 import { getAirport } from '../data/airports'
 import { distanceNm } from '../game/geo'
 import { useGame } from '../game/store'
-import { useSim } from '../sim/useSim'
 import { useSessionState } from '../sim/useSimSession'
 
 const planeIcon = L.divIcon({ className: 'map-pin', html: '🛩️', iconSize: [22, 22], iconAnchor: [11, 11] })
@@ -30,7 +29,7 @@ function clock(ms: number): string {
 export function ActiveMissionWindow() {
   const game = useGame((s) => s.game)
   const session = useSessionState()
-  const { sample } = useSim()
+  const sample = session.lastSample
 
   if (!game || session.phase !== 'SIM_ACTIVE' || !session.aircraftId || !sample) return null
 

@@ -206,6 +206,29 @@ export const MIN_DISTANCE_NM = 40
 export const MAX_DISTANCE_NM = 350
 const TARGET_MAX_FLIGHT_HOURS = 2
 
+/** How far from the pilot a mission may start. Ferrying to the job should be a
+ *  decision, not the bulk of the game (#30). Deliberately a fixed radius rather
+ *  than issue #30's alternative "2.5 hours of flight time": a fleet-dependent
+ *  radius would reshuffle the board on every aircraft purchase or sale, and the
+ *  mission LEG is already capped by fleet speed in maxDistanceForFleet. */
+export const MAX_ORIGIN_DISTANCE_NM = 500
+/** The middle rung of the origin ladder. A tier only means anything if real
+ *  fields fall inside it, and outback home bases are isolated enough that 150 nm
+ *  captured nothing at all at Alice Springs — YBAS's nearest neighbour is YKUR at
+ *  203 nm. That collapsed the nominal 40/35 split into a single 75% block always
+ *  returning the pilot's own field. 300 nm gives the tier real candidates. */
+const NEAR_ORIGIN_DISTANCE_NM = 300
+const ORIGIN_AT_PILOT_SHARE = 0.4 // roll below this: start where the pilot stands
+const ORIGIN_NEAR_SHARE = 0.75 // roll below this: start within NEAR_ORIGIN_DISTANCE_NM
+
+/** Where the pilot is. An `Airport` satisfies this structurally; an off-field
+ *  pilot has coordinates but no `icao`, so the "start here" tier never applies. */
+export interface PilotPosition {
+  lat: number
+  lon: number
+  icao?: string
+}
+
 /**
  * Upper distance bound for a mission, so a leg stays flyable in roughly
  * `TARGET_MAX_FLIGHT_HOURS` — capped further by the fastest aircraft actually
@@ -314,17 +337,47 @@ function feasibleOrigins(
   return origins
 }
 
+/**
+ * Pick an origin on a fall-through ladder anchored on the pilot: their own
+ * field, then nearby, then within the origin radius. Each tier falls through
+ * when it has no candidates — the pilot's field is often the wrong tier for the
+ * rolled mission type (a hub-origin job while they sit on a bush strip). The
+ * last resort is a random feasible origin, so generation can never strand.
+ */
 function pickOrigin(
   regionId: string,
   maxDist: number,
   rule: EndpointRule,
+  pilot: PilotPosition,
   cache?: Map<string, Airport[]>
 ): Airport {
   const origins = feasibleOrigins(regionId, maxDist, rule, cache)
   if (origins.length === 0) throw new Error(`No usable origin in region: ${regionId}`)
-  const biased = rule.originBias ? origins.filter((a) => a.type === rule.originBias) : []
+
+  const roll = Math.random()
+  if (roll < ORIGIN_AT_PILOT_SHARE && pilot.icao) {
+    const here = origins.find((a) => a.icao === pilot.icao)
+    if (here) return here
+  }
+  // Only the near tier needs its own filter. The outermost tier's radius *is*
+  // MAX_ORIGIN_DISTANCE_NM, so it goes straight to the fall-through below
+  // rather than computing an identical filter twice.
+  const near = roll < ORIGIN_NEAR_SHARE ? origins.filter((a) => distanceNm(pilot, a) <= NEAR_ORIGIN_DISTANCE_NM) : []
+  const pool =
+    near.length > 0 ? near : origins.filter((a) => distanceNm(pilot, a) <= MAX_ORIGIN_DISTANCE_NM)
+  if (pool.length === 0) {
+    // Nothing at all inside the radius: the pilot is somewhere no legitimate
+    // play can reach, e.g. a save corrupted to Null Island (#28). Take a
+    // *random* feasible origin, not the nearest one — pickOrigin is called once
+    // per mission with only the type varying, so "nearest" is deterministic and
+    // would collapse the entire board onto one origin per feasible-origin set.
+    // Either way the board is far away, but a varied one stays a real board.
+    return pick(origins)
+  }
+
+  const biased = rule.originBias ? pool.filter((a) => a.type === rule.originBias) : []
   if (biased.length > 0 && Math.random() < 0.7) return pick(biased)
-  return pick(origins)
+  return pick(pool)
 }
 
 /** Generate a single mission valid on the given day, scaled by reputation and current fleet. */
@@ -333,6 +386,7 @@ export function generateMission(
   reputation: number,
   fleetSpecs: AircraftSpec[] = [],
   regionId: string,
+  pilot: PilotPosition,
   originCache?: Map<string, Airport[]>
 ): Mission {
   const cfg = weightedType(fleetSpecs)
@@ -342,7 +396,7 @@ export function generateMission(
 
   // Both endpoints stay inside the tiers the mission type allows, and the origin
   // must have at least one allowed destination inside the distance window.
-  const from = pickOrigin(regionId, maxDist, cfg.endpoints, originCache)
+  const from = pickOrigin(regionId, maxDist, cfg.endpoints, pilot, originCache)
   const { airport: to, distance: dist } = pickDestination(from, maxDist, regionId, cfg.endpoints)
 
   const maxSeats = maxSeatsForFleet(fleetSpecs)
@@ -386,12 +440,13 @@ export function generateMissions(
   day: number,
   reputation: number,
   fleetSpecs: AircraftSpec[] = [],
-  regionId: string
+  regionId: string,
+  pilot: PilotPosition
 ): Mission[] {
   // The feasibility filter is O(origins × destinations); one cache per board refill.
   const originCache = new Map<string, Airport[]>()
   return Array.from({ length: count }, () =>
-    generateMission(day, reputation, fleetSpecs, regionId, originCache)
+    generateMission(day, reputation, fleetSpecs, regionId, pilot, originCache)
   )
 }
 

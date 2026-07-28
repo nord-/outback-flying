@@ -223,6 +223,7 @@ export interface GameState {
   balance: number
   reputation: number // 0..100
   day: number
+  missionBoardTarget: number // postings the board refills to; one of MISSION_BOARD_STEPS
   fuel: FuelPrices
   fleet: OwnedAircraft[]
   availableMissions: Mission[]
