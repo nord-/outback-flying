@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useGame } from '../game/store'
+import { useGame, MISSION_BOARD_STEPS } from '../game/store'
 import { getAirport, classifyFuel } from '../data/airports'
 import { getSpec } from '../data/aircraft'
 import { estimateProfit, URGENCY_MULT } from '../game/economy'
@@ -38,6 +38,7 @@ function MissionCard({
   const game = useGame((s) => s.game)!
   const accept = useGame((s) => s.acceptMission)
   const abandon = useGame((s) => s.abandonMission)
+  const dismiss = useGame((s) => s.dismissMission)
 
   const from = getAirport(m.fromIcao)
   const to = getAirport(m.toIcao)
@@ -74,6 +75,7 @@ function MissionCard({
   const acceptWouldExceed =
     dutyAlreadyOver || (bestDutyEst !== null && wouldBeOver(game.dutyLog, game.day, bestDutyEst))
   const [confirmingAccept, setConfirmingAccept] = useState(false)
+  const [confirmingDismiss, setConfirmingDismiss] = useState(false)
 
   return (
     <div className={`card mission${highlighted ? ' highlight' : ''}`} ref={cardRef}>
@@ -124,17 +126,30 @@ function MissionCard({
               <button className="btn ghost sm" onClick={() => setConfirmingAccept(false)}>Cancel</button>
             </div>
           </div>
-        ) : isTimeCritical(m) && !simAvailable ? (
-          <span className="pill" title="Time-critical missions can only be flown in the desktop app with SimConnect — accepting one here would be a guaranteed penalty.">
-            ⏱ Requires SimConnect
-          </span>
+        ) : confirmingDismiss ? (
+          <div className="notice warn" style={{ width: '100%' }}>
+            ⚠ Turning down a call-out costs 1 reputation. The slot fills with a new posting when you advance the day.
+            <div className="actions mt">
+              <button className="btn danger sm" onClick={() => { dismiss(m.id); setConfirmingDismiss(false) }}>Dismiss anyway</button>
+              <button className="btn ghost sm" onClick={() => setConfirmingDismiss(false)}>Cancel</button>
+            </div>
+          </div>
         ) : (
-          <button
-            className="btn primary sm"
-            onClick={() => (acceptWouldExceed ? setConfirmingAccept(true) : accept(m.id))}
-          >
-            Accept
-          </button>
+          <>
+            {isTimeCritical(m) && !simAvailable ? (
+              <span className="pill" title="Time-critical missions can only be flown in the desktop app with SimConnect — accepting one here would be a guaranteed penalty.">
+                ⏱ Requires SimConnect
+              </span>
+            ) : (
+              <button
+                className="btn primary sm"
+                onClick={() => (acceptWouldExceed ? setConfirmingAccept(true) : accept(m.id))}
+              >
+                Accept
+              </button>
+            )}
+            <button className="btn ghost sm" onClick={() => setConfirmingDismiss(true)}>Dismiss</button>
+          </>
         )}
       </div>
     </div>
@@ -148,6 +163,7 @@ export function Missions() {
   // bridge is only present in the desktop build, so this gates accepting a
   // time-critical mission that couldn't otherwise be flown (#11).
   const { available: simAvailable } = useSim()
+  const setBoardTarget = useGame((s) => s.setMissionBoardTarget)
 
   const { selectedMissionId, setSelectedMissionId } = useNav()
   const [highlightId, setHighlightId] = useState<string | null>(null)
@@ -211,7 +227,21 @@ export function Missions() {
         </div>
       )}
 
-      <h2 className="page-title" style={{ marginTop: 26 }}>Mission board ({available.length})</h2>
+      <div className="spread" style={{ marginTop: 26 }}>
+        <h2 className="page-title" style={{ margin: 0 }}>Mission board ({available.length})</h2>
+        <div className="actions">
+          <span className="tiny muted">Board size</span>
+          {MISSION_BOARD_STEPS.map((n) => (
+            <button
+              key={n}
+              className={`btn sm ${n === game.missionBoardTarget ? 'primary' : 'ghost'}`}
+              onClick={() => setBoardTarget(n)}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      </div>
       {available.length === 0 ? (
         <div className="empty">The board is empty. Advance the day to see new call-outs.</div>
       ) : (

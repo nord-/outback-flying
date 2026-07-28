@@ -14,8 +14,12 @@ const SIM_VERSIONS: { label: string; protocol: SimProtocol }[] = [
  * Renders nothing outside the desktop app (no `window.outback.sim`).
  */
 export function SimStatus() {
-  const { available, status, message, sample, connect, disconnect } = useSim()
+  const { available, status, message, connect, disconnect } = useSim()
   const session = useSessionState()
+  // session.lastSample is the guarded sample (#28); the raw useSim() stream is
+  // deliberately NOT read here — it still carries the sim's shutdown zeros, and
+  // this chip is the most persistently visible readout on screen.
+  const sample = session.lastSample
   const game = useGame((s) => s.game)
   const [protocol, setProtocol] = useState<SimProtocol>('KittyHawk')
   const [busy, setBusy] = useState(false)

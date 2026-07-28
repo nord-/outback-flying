@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { deriveMapView, missionsAtAirport } from './mapView'
+import type { LiveFlight } from './mapView'
 import { airportsInRegion } from '../data/airports'
 import type { GameState, Mission } from './types'
 
@@ -31,6 +32,7 @@ function game(over: Partial<GameState> = {}): GameState {
     balance: 1000,
     reputation: 50,
     day: 1,
+    missionBoardTarget: 10,
     fuel: { AVGAS: 2.9, JETA: 2.4 },
     fleet: [{ id: 'ac1', specId: 'c172', registration: 'VH-ABC', hoursFlown: 0, condition: 100, locationIcao: 'YBAS', fuelL: 200 }],
     availableMissions: [],
@@ -140,5 +142,60 @@ describe('MapPoint type tier', () => {
   it('marks off-field points with a null tier', () => {
     const off = { ...game(), pilotOffField: { lat: -24, lon: 134 } }
     expect(deriveMapView(off).pilot.type).toBeNull()
+  })
+})
+
+describe('deriveMapView with a live flight (#29)', () => {
+  const live = (over: Partial<LiveFlight> = {}): LiveFlight => ({
+    aircraftId: 'ac1',
+    lat: -24.5,
+    lon: 134.5,
+    groundKts: 142,
+    altFt: 8500,
+    onGround: false,
+    track: [{ lat: -23.8, lon: 133.9 }, { lat: -24.5, lon: 134.5 }],
+    ...over,
+  })
+
+  it('moves the matched aircraft to the live position and tags it', () => {
+    const v = deriveMapView(game(), live())
+    expect(v.aircraft[0].point.lat).toBe(-24.5)
+    expect(v.aircraft[0].point.lon).toBe(134.5)
+    expect(v.aircraft[0].point.icao).toBe('')
+    expect(v.aircraft[0].point.type).toBeNull()
+    expect(v.aircraft[0].live).toEqual({ groundKts: 142, altFt: 8500, onGround: false })
+  })
+
+  it('exposes the flown track', () => {
+    expect(deriveMapView(game(), live()).liveTrack).toEqual([
+      { lat: -23.8, lon: 133.9 },
+      { lat: -24.5, lon: 134.5 },
+    ])
+  })
+
+  it('moves the pilot with the aircraft', () => {
+    const v = deriveMapView(game(), live())
+    expect(v.pilot.lat).toBe(-24.5)
+    expect(v.pilot.lon).toBe(134.5)
+  })
+
+  it('draws every accepted mission pilot leg from the live position', () => {
+    const g = game({ acceptedMissions: [mission({ id: 'b1', fromIcao: 'YBMA', toIcao: 'YCCY' })] })
+    const v = deriveMapView(g, live())
+    expect(v.acceptedMissions[0].pilotLeg!.from).toMatchObject({ lat: -24.5, lon: 134.5 })
+    expect(v.acceptedMissions[0].pilotLeg!.to).toMatchObject({ icao: 'YBMA' })
+  })
+
+  it('ignores a live flight whose aircraft is not in the fleet', () => {
+    const v = deriveMapView(game(), live({ aircraftId: 'gone' }))
+    expect(v.aircraft[0].point.icao).toBe('YBAS')
+    expect(v.aircraft[0].live).toBeUndefined()
+    expect(v.liveTrack).toBeUndefined()
+    expect(v.pilot.icao).toBe('YBHI')
+  })
+
+  it('is unchanged when no live flight is given', () => {
+    expect(deriveMapView(game()).liveTrack).toBeUndefined()
+    expect(deriveMapView(game()).aircraft[0].live).toBeUndefined()
   })
 })

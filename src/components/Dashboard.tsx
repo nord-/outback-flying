@@ -6,7 +6,6 @@ import { rankFor, rankProgress } from '../game/progression'
 import { dutyStatus, isOverAnyLimit } from '../game/duty'
 import { GALLONS_TO_LITRES } from '../game/flightlog'
 import { useSessionState } from '../sim/useSimSession'
-import { useSim } from '../sim/useSim'
 import { OperationsMap } from './OperationsMap'
 import { ActiveMissionWindow } from './ActiveMissionWindow'
 
@@ -21,7 +20,7 @@ export function Dashboard() {
   const duty = dutyStatus(game.dutyLog, game.day)
   const DUTY_LABEL: Record<number, string> = { 1: 'Today', 7: '7 days', 14: '14 days', 28: '28 days' }
   const session = useSessionState()
-  const { sample } = useSim()
+  const sample = session.lastSample
   const liveAc = game.fleet.find((a) => a.id === session.aircraftId)
 
   return (

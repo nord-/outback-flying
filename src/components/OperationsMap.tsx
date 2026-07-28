@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import {
   MapContainer,
   TileLayer,
@@ -14,7 +14,9 @@ import * as L from 'leaflet'
 import type { LatLngExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useGame } from '../game/store'
-import { deriveMapView, regionBounds, type MapPoint } from '../game/mapView'
+import { deriveMapView, regionBounds, type LiveFlight, type MapPoint } from '../game/mapView'
+import { simplifyTrack } from '../game/flightlog'
+import { useSessionState } from '../sim/useSimSession'
 import type { Urgency } from '../game/types'
 import { useNav } from './ui'
 import { MissionPickerDialog } from './MissionPickerDialog'
@@ -85,17 +87,56 @@ function FitBounds({ points, regionId }: { points: MapPoint[]; regionId: string 
 
 export function OperationsMap() {
   const game = useGame((s) => s.game)!
-  const view = deriveMapView(game)
+  const session = useSessionState()
+
+  // Recorded track points arrive about once a second and the array is only
+  // ever appended to, so its length identifies its contents. Keying on the
+  // exact length would re-run RDP over the *whole* track every sample, which
+  // grows without bound on a long flight (measured ~9 ms at 1 h, ~56 ms at
+  // 5 h — every second, on the default tab). Shifting the length right by 4
+  // coarsens the key to one re-run per ~16 samples, which amortizes to ~0.6
+  // and ~3.5 ms per sample respectively.
+  // The visual loss is nil: the trailing ≤16 s of track is a few pixels at any
+  // sensible zoom, and the aircraft marker is a separate element outside this
+  // memo, so the plane itself still moves at the full sample rate. The same
+  // coarsening also means the track stays empty for a flight's first ~16
+  // samples (trackChunk is 0 for lengths 0-15) — cosmetic for the same reason,
+  // and moot for a flight shorter than that.
+  const trackChunk = (session.recorder?.fullTrack.length ?? 0) >> 4
+  const liveTrack = useMemo(
+    () => simplifyTrack(session.recorder?.fullTrack ?? []).map((p) => ({ lat: p.lat, lon: p.lon })),
+    [trackChunk]
+  )
+
+  // session.lastSample is the guarded sample (#28); the raw useSim() stream is
+  // deliberately NOT read here — it still carries the sim's shutdown zeros.
+  const s = session.lastSample
+  const live: LiveFlight | undefined =
+    session.phase === 'SIM_ACTIVE' && session.aircraftId && s
+      ? {
+          aircraftId: session.aircraftId,
+          lat: s.lat,
+          lon: s.lon,
+          groundKts: s.groundKts,
+          altFt: s.altFt,
+          onGround: s.onGround,
+          track: liveTrack,
+        }
+      : undefined
+
+  const view = deriveMapView(game, live)
   const { setTab, setSelectedMissionId } = useNav()
   const [pickerIcao, setPickerIcao] = useState<string | null>(null)
 
   // Initial view / empty-state fallback: the current region's bounding box.
   const bounds = new L.LatLngBounds(regionBounds(game.regionId))
 
+  // The live position is deliberately excluded: FitBounds keys off this set, and
+  // a moving aircraft would re-fit the map every second.
   const focusPoints: MapPoint[] = [
     view.homeBase,
-    view.pilot,
-    ...view.aircraft.map((a) => a.point),
+    ...(live ? [] : [view.pilot]),
+    ...view.aircraft.filter((a) => !a.live).map((a) => a.point),
     ...view.availableMissions.flatMap((m) => [m.from, m.to]),
     ...view.acceptedMissions.flatMap((m) => [m.from, m.to]),
   ]
@@ -165,9 +206,21 @@ export function OperationsMap() {
             </Fragment>
           ))}
 
+          {view.liveTrack && view.liveTrack.length > 1 && (
+            <Polyline
+              positions={view.liveTrack.map((p) => [p.lat, p.lon] as [number, number])}
+              pathOptions={{ color: '#7ee0a0', weight: 2, opacity: 0.9 }}
+            />
+          )}
+
           {view.aircraft.map((a, i) => (
             <Marker key={`${a.registration}-${i}`} position={ll(a.point)} icon={planeIcon}>
-              <Tooltip>{a.registration} · {a.point.icao}</Tooltip>
+              <Tooltip>
+                {a.registration} ·{' '}
+                {a.live
+                  ? `${a.live.groundKts.toFixed(0)} kt · ${a.live.altFt.toFixed(0)} ft`
+                  : a.point.icao || 'Off-field'}
+              </Tooltip>
             </Marker>
           ))}
 
@@ -175,7 +228,7 @@ export function OperationsMap() {
             <Tooltip>Home base · {view.homeBase.icao}</Tooltip>
           </Marker>
           <Marker position={ll(view.pilot)} icon={pilotIcon} zIndexOffset={1000}>
-            <Tooltip>Pilot · {view.pilot.icao}</Tooltip>
+            <Tooltip>Pilot · {view.pilot.icao || (live ? 'In flight' : 'Off-field')}</Tooltip>
           </Marker>
         </MapContainer>
       </div>

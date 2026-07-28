@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { persistentStorage } from './idbStorage'
 import { saveFlightLog } from './flightLogStorage'
-import { computeDutyMinutes } from './flightlog'
+import { computeDutyMinutes, scrubFlightLog } from './flightlog'
 import { penaltyFactor, isOverAnyLimit } from './duty'
 import type {
   GameState,
@@ -31,10 +31,29 @@ import {
 } from './economy'
 import { landingWear } from './fields'
 
-const SAVE_VERSION = 10 // v7 = fuel tanks; v8 = always-on sim tracking (#20); v9 = per-aircraft armed missions (#22 review); v10 = time-critical missions (#11), no migration
+const SAVE_VERSION = 11 // v7 = fuel tanks; v8 = always-on sim tracking (#20); v9 = per-aircraft armed missions (#22 review); v10 = time-critical missions (#11); v11 = Null Island scrub (#28) + configurable board size (#30)
 const SAVE_KEY = 'outback-flying-save'
-const MISSION_BOARD_TARGET = 7
+// Board size is the player's call (#30) — a bigger board means more choice and
+// less ferrying, at the cost of a busier screen.
+export const MISSION_BOARD_STEPS = [5, 10, 15, 20] as const
+export const DEFAULT_MISSION_BOARD_TARGET = 10
+/**
+ * Snap an arbitrary number to the nearest allowed board size, so neither a
+ * hand-edited save nor a future UI control can wedge the board at an
+ * unintended size (a persisted 5000 would have advanceDay generate 5000
+ * missions). Shared by the setter and the migration — one rule, one place.
+ */
+function snapBoardTarget(target: number): number {
+  return MISSION_BOARD_STEPS.reduce((best, step) =>
+    Math.abs(step - target) < Math.abs(best - target) ? step : best
+  )
+}
 const TIME_CRITICAL_FAIL_REP = -7 // reputation hit when a time-critical delivery misses its window (#11)
+// Turning down a call-out costs a little standing. The clamp floors reputation
+// at 0, so a rookie (who starts there, #23) dismisses for free — deliberate:
+// the cost is meant to make an ESTABLISHED operator think twice, and refilling
+// only at advanceDay already prevents rerolling the board.
+const DISMISS_REP = 1
 // A new operator is an unknown rookie: no reputation to trade on, and none to
 // lose either — every rep change is clamped to 0..100, so early mistakes are
 // free (#23).
@@ -93,7 +112,14 @@ export interface PersistedSave {
  *  - v8: default the armed-mission list
  *  - v9: armed missions gain an owning aircraftId; a legacy plain-string
  *    list can't attribute one, so it's dropped (missions simply re-arm next
- *    time their aircraft passes the departure field) */
+ *    time their aircraft passes the departure field)
+ *  - v10: time-critical missions, no migration needed
+ *  - v11: drop impossible legs left by a sim unloading its aircraft (#28).
+ *    Parked positions are deliberately untouched: `commitLeg` only writes
+ *    `locationIcao` on an on-block at a catalogued field, so after a running
+ *    stop it names an earlier field — "recovering" an off-field position from
+ *    it would teleport the aircraft. A stuck save recovers in-game instead,
+ *    via repositionAircraft, which accepts an off-field origin. */
 export function migratePersistedState(persisted: unknown, version: number): PersistedSave {
   const state = persisted as PersistedSave
   const g = state?.game
@@ -160,6 +186,25 @@ export function migratePersistedState(persisted: unknown, version: number): Pers
   }
   delete (g as unknown as { armedMissionIds?: unknown[] }).armedMissionIds
 
+  // Null Island (v11, #28): a leg closed at 0,0 when the sim unloaded its
+  // aircraft. Drop those legs and re-derive the totals; an entry with nothing
+  // left goes. Idempotent — a scrubbed log has no impossible legs to find.
+  // Both Array.isArray guards are about hostile input, not save history: a
+  // hand-edited or corrupt save whose `flightLogs` or a `legs` entry is not
+  // an array would throw inside .map/scrubFlightLog and brick hydration
+  // outright — no released save actually lacks either field.
+  g.flightLogs = (Array.isArray(g.flightLogs) ? g.flightLogs : [])
+    .map((fl) => (Array.isArray(fl.legs) ? scrubFlightLog(fl) : fl))
+    .filter((fl): fl is FlightLogSummary => fl !== null)
+
+  // Configurable board size (v11, #30). Older saves refilled to a fixed 7 and
+  // carry no field at all. A value that *is* present is still not trusted: a
+  // hand-edited 5000 would have advanceDay generate 5000 missions, so snap it
+  // to a legal step the same way the setter does.
+  g.missionBoardTarget = g.missionBoardTarget
+    ? snapBoardTarget(g.missionBoardTarget)
+    : DEFAULT_MISSION_BOARD_TARGET
+
   g.version = SAVE_VERSION
   return state
 }
@@ -189,14 +234,16 @@ function makeInitialState(companyName: string, startSpecId: string, regionId: st
     balance: 0,
     reputation: STARTING_REPUTATION,
     day: 1,
+    missionBoardTarget: DEFAULT_MISSION_BOARD_TARGET,
     fuel: { ...region.startingFuel },
     fleet: [starter],
     availableMissions: generateMissions(
-      MISSION_BOARD_TARGET,
+      DEFAULT_MISSION_BOARD_TARGET,
       1,
       STARTING_REPUTATION,
       [getSpec(starter.specId)],
-      regionId
+      regionId,
+      getAirport(home)
     ),
     acceptedMissions: [],
     ledger: [],
@@ -261,6 +308,8 @@ interface Store {
   // missions
   acceptMission: (missionId: string) => void
   abandonMission: (missionId: string) => void
+  dismissMission: (missionId: string) => void
+  setMissionBoardTarget: (target: number) => void
   flyMission: (report: FlyReport) => FlyOutcome
   repositionAircraft: (aircraftId: string, toIcao: string, blockMinutes: number, fuelLitres: number) => FlyOutcome
   // fleet
@@ -535,6 +584,27 @@ export const useGame = create<Store>()(
           g.reputation = clamp(g.reputation - 3, 0, 100)
           g.stats.missionsFailed += 1
           g.armedMissions = g.armedMissions.filter((r) => r.missionId !== missionId)
+          return { game: g }
+        }),
+
+      dismissMission: (missionId) =>
+        set((s) => {
+          if (!s.game) return s
+          const g = structuredClone(s.game)
+          const idx = g.availableMissions.findIndex((m) => m.id === missionId)
+          if (idx === -1) return s // accepted missions go through abandonMission
+          g.availableMissions.splice(idx, 1)
+          g.reputation = clamp(g.reputation - DISMISS_REP, 0, 100)
+          return { game: g }
+        }),
+
+      setMissionBoardTarget: (target) =>
+        set((s) => {
+          if (!s.game) return s
+          const snapped = snapBoardTarget(target)
+          if (snapped === s.game.missionBoardTarget) return s
+          const g = structuredClone(s.game)
+          g.missionBoardTarget = snapped
           return { game: g }
         }),
 
@@ -902,11 +972,14 @@ export const useGame = create<Store>()(
           const drift = (p: number) => +Math.max(1.2, p * (0.92 + Math.random() * 0.16)).toFixed(2)
           g.fuel = { AVGAS: drift(g.fuel.AVGAS), JETA: drift(g.fuel.JETA) }
 
-          // Refill the board.
-          const need = MISSION_BOARD_TARGET - g.availableMissions.length
+          // Refill the board — near wherever the pilot has ended up (#30).
+          const need = g.missionBoardTarget - g.availableMissions.length
           if (need > 0) {
             const fleetSpecs = g.fleet.map((a) => getSpec(a.specId))
-            g.availableMissions.push(...generateMissions(need, g.day, g.reputation, fleetSpecs, g.regionId))
+            const pilot = g.pilotOffField ?? getAirport(g.pilotLocationIcao)
+            g.availableMissions.push(
+              ...generateMissions(need, g.day, g.reputation, fleetSpecs, g.regionId, pilot)
+            )
           }
 
           return { game: g }

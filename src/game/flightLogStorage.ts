@@ -10,6 +10,7 @@
 // simply not recorded (the game-state summary — earnings, distance, etc. —
 // is unaffected either way).
 import type { FlightLog } from './types'
+import { isPlausiblePosition } from './flightlog'
 
 const DB_NAME = 'outback-flying-logs'
 const DB_VERSION = 1
@@ -90,7 +91,11 @@ export async function saveFlightLog(log: FlightLog): Promise<void> {
 export async function getFlightLog(id: string): Promise<FlightLog | null> {
   if (!hasIndexedDB()) return null
   const result = await request<FlightLog | undefined>('readonly', (s) => s.get(id))
-  return result ?? null
+  if (!result) return null
+  // Tracks recorded before the #28 guard can contain the sim's unload position.
+  // Filter on read rather than rewriting stored records: tracks are a
+  // nice-to-have, and a read filter cannot corrupt what is on disk.
+  return { ...result, track: (result.track ?? []).filter((p) => isPlausiblePosition(p.lat, p.lon)) }
 }
 
 export async function deleteFlightLog(id: string): Promise<void> {

@@ -35,6 +35,26 @@ describe('flightLogStorage', () => {
     expect(loaded).toEqual(log)
   })
 
+  it('drops Null Island track points on read (#28)', async () => {
+    // The exact coordinates recovered from the real #28 save: the sim reports
+    // an all-but-zero position while it unloads the aircraft, and tracks
+    // recorded before the guard landed still carry those points.
+    const real = { t: 0, lat: -23.8, lon: 133.9, hdg: 90, gs: 150, alt: 6500, onGround: false }
+    const nullIsland = {
+      t: 1,
+      lat: 0.0004074894422501528,
+      lon: 0.013974503360709429,
+      hdg: 0,
+      gs: 0,
+      alt: 0,
+      onGround: true,
+    }
+    const log = freshLog({ track: [real, nullIsland] })
+    await saveFlightLog(log)
+    const loaded = await getFlightLog(log.id)
+    expect(loaded?.track).toEqual([real])
+  })
+
   it('returns null for an unknown id', async () => {
     expect(await getFlightLog('does-not-exist')).toBeNull()
   })

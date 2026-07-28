@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { migratePersistedState, useGame, getHydrationError } from './store'
+import { migratePersistedState, useGame, getHydrationError, MISSION_BOARD_STEPS, DEFAULT_MISSION_BOARD_TARGET } from './store'
 import { getSpec } from '../data/aircraft'
 import { airportsInRegion, getAirport } from '../data/airports'
 import { maintenanceCost, refuelCost, conditionLoss } from './economy'
@@ -68,7 +68,7 @@ describe('migratePersistedState', () => {
     const out = migratePersistedState(legacySave('YBHI'), 1)
     expect(out.game?.homeBaseIcao).toBe('YBAS')
     expect(out.game?.pilotLocationIcao).toBe('YBHI')
-    expect(out.game?.version).toBe(10)
+    expect(out.game?.version).toBe(11)
   })
 
   it('adds the outback region id and synthesises an operator profile', () => {
@@ -104,9 +104,9 @@ describe('migratePersistedState', () => {
 
   it('leaves a save from a newer version untouched', () => {
     const save = legacySave('YBHI')
-    save.game!.version = 11
-    const out = migratePersistedState(save, 11)
-    expect(out.game?.version).toBe(11)
+    save.game!.version = 12
+    const out = migratePersistedState(save, 12)
+    expect(out.game?.version).toBe(12)
     expect(out.game?.homeBaseIcao).toBeUndefined()
   })
 
@@ -135,7 +135,7 @@ describe('migratePersistedState', () => {
       { id: 'fl2', day: 3, dutyMinutes: 90 } as never, // free flight, no missionId
     ]
     const out = migratePersistedState(save, 1)
-    expect(out.game?.version).toBe(10)
+    expect(out.game?.version).toBe(11)
     expect(out.game?.dutyLog).toHaveLength(2)
     expect(out.game?.dutyLog[0]).toMatchObject({ day: 2, minutes: 150, kind: 'MISSION', missionId: 'm1' })
     expect(out.game?.dutyLog[1]).toMatchObject({ day: 3, minutes: 90, kind: 'FREE' })
@@ -169,7 +169,7 @@ describe('migratePersistedState', () => {
     expect(out.game!.armedMissions).toEqual([])
     expect(out.game!.pilotOffField).toBeUndefined()
     expect(out.game!.openChain).toBeUndefined()
-    expect(out.game!.version).toBe(10)
+    expect(out.game!.version).toBe(11)
   })
 
   it('v9 drops a legacy plain-string armedMissionIds list instead of guessing its owning aircraft', () => {
@@ -177,7 +177,7 @@ describe('migratePersistedState', () => {
     ;(persisted.game as any).armedMissionIds = ['m1', 'm2']
     const out = migratePersistedState(persisted, 8)
     expect(out.game!.armedMissions).toEqual([])
-    expect(out.game!.version).toBe(10)
+    expect(out.game!.version).toBe(11)
   })
 })
 
@@ -442,7 +442,7 @@ describe('migratePersistedState catalogue remap', () => {
     const out = migratePersistedState(legacySave('YBAS'), 2)
     // legacySave() builds a fleet aircraft with the removed specId 'c210'
     expect(out.game?.fleet[0].specId).toBe('bonanza')
-    expect(out.game?.version).toBe(10)
+    expect(out.game?.version).toBe(11)
     expect(() => getSpec(out.game!.fleet[0].specId)).not.toThrow()
   })
 
@@ -1209,5 +1209,233 @@ describe('time-critical missions (#11)', () => {
     const g = useGame.getState().game!
     expect(g.armedMissions.some((r) => r.missionId === m.id)).toBe(false) // un-armed
     expect(g.acceptedMissions.some((mm) => mm.id === m.id)).toBe(true) // still accepted, re-arms next session
+  })
+})
+
+describe('Null Island migration (v11, #28)', () => {
+  const nullIslandLeg = { fromIcao: 'YTNK', toIcao: null, blockMinutes: 1.59, flightMinutes: 1.59, distanceNm: 7866.47, fuelUsedL: 0 }
+  const realLeg = { fromIcao: 'YBAS', toIcao: 'YBAS', blockMinutes: 85.46, flightMinutes: 67.19, distanceNm: 413.04, fuelUsedL: 191.8 }
+
+  function v10Save() {
+    return {
+      game: {
+        version: 10,
+        companyName: 'Test Air',
+        regionId: 'outback',
+        homeBaseIcao: 'YBAS',
+        pilotLocationIcao: 'YCCY',
+        balance: 9592,
+        reputation: 5,
+        day: 1,
+        fuel: { AVGAS: 2.9, JETA: 2.4 },
+        fleet: [{ id: 'ac1', specId: 'bonanza', registration: 'VH-RWV', hoursFlown: 3.37, condition: 96.82, locationIcao: 'YCCY', fuelL: 235.04 }],
+        availableMissions: [],
+        acceptedMissions: [],
+        ledger: [],
+        flightLogs: [
+          { id: 'fl1', day: 1, aircraftId: 'ac1', legs: [realLeg, nullIslandLeg], startIcao: 'YBAS', endIcao: null, intermediates: ['YBAS'], blockMinutes: 87.05, flightMinutes: 68.78, dutyMinutes: 177, distanceNm: 8279.51, fuelUsedL: 191.8, landings: 2, earnings: -123 },
+        ],
+        dutyLog: [],
+        armedMissions: [],
+        stats: { missionsCompleted: 0, missionsFailed: 0, hoursFlown: 3.37, totalEarned: 0 },
+      },
+      operator: { name: 'Test Air', xp: 0, startRegionId: 'outback' },
+    }
+  }
+
+  it('drops the impossible leg and re-derives the summary totals', () => {
+    const migrated = migratePersistedState(v10Save(), 10)
+    const log = migrated.game!.flightLogs[0]
+    expect(log.legs).toEqual([realLeg])
+    expect(log.distanceNm).toBeCloseTo(413.04, 2)
+    expect(log.endIcao).toBe('YBAS')
+  })
+
+  it('never moves anything that is parked', () => {
+    const before = v10Save()
+    const migrated = migratePersistedState(v10Save(), 10)
+    expect(migrated.game!.fleet[0].locationIcao).toBe(before.game.fleet[0].locationIcao)
+    expect(migrated.game!.fleet[0].offField).toBeUndefined()
+    expect(migrated.game!.pilotOffField).toBeUndefined()
+    expect(migrated.game!.pilotLocationIcao).toBe('YCCY')
+  })
+
+  it('leaves an off-field position alone even when it IS Null Island', () => {
+    const nullIsland = { lat: 0.0004, lon: 0.0139 }
+    // v10Save() is a plain literal, so widen it to attach the optional fields.
+    const save = v10Save() as {
+      game: { fleet: { offField?: { lat: number; lon: number } }[]; pilotOffField?: { lat: number; lon: number } }
+    }
+    save.game.fleet[0].offField = nullIsland
+    save.game.pilotOffField = nullIsland
+    const migrated = migratePersistedState(save, 10)
+    expect(migrated.game!.fleet[0].offField).toEqual(nullIsland)
+    expect(migrated.game!.pilotOffField).toEqual(nullIsland)
+  })
+
+  it('drops a log entry whose every leg was impossible', () => {
+    const save = v10Save()
+    save.game.flightLogs[0].legs = [nullIslandLeg]
+    expect(migratePersistedState(save, 10).game!.flightLogs).toEqual([])
+  })
+
+  it('is idempotent', () => {
+    const once = migratePersistedState(v10Save(), 10)
+    const twice = migratePersistedState(structuredClone(once), 11)
+    expect(twice.game!.flightLogs).toEqual(once.game!.flightLogs)
+  })
+})
+
+describe('dismissMission (#30)', () => {
+  afterEach(() => useGame.getState().resetGame())
+
+  it('removes the posting from the board and charges one reputation', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    useGame.setState((s) => ({ game: { ...s.game!, reputation: 40, availableMissions: [mission({ id: 'm9' })] } }))
+    useGame.getState().dismissMission('m9')
+    const g = useGame.getState().game!
+    expect(g.availableMissions.find((m) => m.id === 'm9')).toBeUndefined()
+    expect(g.reputation).toBe(39)
+  })
+
+  it('never charges below zero — a rookie starts there', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    useGame.setState((s) => ({ game: { ...s.game!, reputation: 0, availableMissions: [mission({ id: 'm9' })] } }))
+    useGame.getState().dismissMission('m9')
+    expect(useGame.getState().game!.reputation).toBe(0)
+  })
+
+  it('does not touch money or the failure count', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    useGame.setState((s) => ({ game: { ...s.game!, availableMissions: [mission({ id: 'm9' })] } }))
+    const before = useGame.getState().game!
+    const balance = before.balance
+    const ledgerLength = before.ledger.length
+    useGame.getState().dismissMission('m9')
+    const g = useGame.getState().game!
+    expect(g.balance).toBe(balance)
+    expect(g.ledger).toHaveLength(ledgerLength)
+    expect(g.stats.missionsFailed).toBe(0)
+  })
+
+  it('ignores an accepted mission — that is what Abandon is for', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    useGame.setState((s) => ({ game: { ...s.game!, reputation: 40, acceptedMissions: [mission({ id: 'm9' })] } }))
+    useGame.getState().dismissMission('m9')
+    const g = useGame.getState().game!
+    expect(g.acceptedMissions).toHaveLength(1)
+    expect(g.reputation).toBe(40)
+  })
+
+  it('does not refill the board until the day advances', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const before = useGame.getState().game!.availableMissions.length
+    useGame.getState().dismissMission(useGame.getState().game!.availableMissions[0].id)
+    expect(useGame.getState().game!.availableMissions).toHaveLength(before - 1)
+  })
+})
+
+describe('missionBoardTarget (#30)', () => {
+  afterEach(() => useGame.getState().resetGame())
+
+  it('starts a new game with the default board size', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const g = useGame.getState().game!
+    expect(g.missionBoardTarget).toBe(DEFAULT_MISSION_BOARD_TARGET)
+    expect(g.availableMissions).toHaveLength(DEFAULT_MISSION_BOARD_TARGET)
+  })
+
+  it('refills to the configured target on day advance', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    useGame.getState().setMissionBoardTarget(20)
+    useGame.getState().advanceDay()
+    expect(useGame.getState().game!.availableMissions.length).toBe(20)
+  })
+
+  it('never removes postings when the target is lowered', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    useGame.getState().setMissionBoardTarget(20)
+    useGame.getState().advanceDay()
+    useGame.getState().setMissionBoardTarget(5)
+    const before = useGame.getState().game!.availableMissions
+    expect(before.length).toBeGreaterThan(5)
+    useGame.getState().advanceDay()
+
+    // The board only stops being refilled; nothing is thrown away for being
+    // over target. The only legitimate removal is a posting reaching its own
+    // deadline, so the survivors must be *exactly* the not-yet-expired subset
+    // of what was there before. Asserting ">= 5" instead would sail straight
+    // through a prune down to the new target — the regression this test names.
+    const g = useGame.getState().game!
+    const survivors = before.filter((m) => g.day <= m.expiresDay)
+    expect(survivors.length).toBeGreaterThan(5) // so no refill was triggered either
+    expect(g.availableMissions.map((m) => m.id).sort()).toEqual(survivors.map((m) => m.id).sort())
+  })
+
+  it('snaps an off-step value to the nearest allowed step', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    useGame.getState().setMissionBoardTarget(13)
+    expect(useGame.getState().game!.missionBoardTarget).toBe(15)
+    useGame.getState().setMissionBoardTarget(-4)
+    expect(useGame.getState().game!.missionBoardTarget).toBe(5)
+    useGame.getState().setMissionBoardTarget(999)
+    expect(useGame.getState().game!.missionBoardTarget).toBe(20)
+  })
+
+  it('offers exactly the documented steps', () => {
+    expect(MISSION_BOARD_STEPS).toEqual([5, 10, 15, 20])
+  })
+
+  it('gives an older save the default target', () => {
+    const save = { game: { version: 10, companyName: 'Old Air', regionId: 'outback', homeBaseIcao: 'YBAS', pilotLocationIcao: 'YBAS', balance: 0, reputation: 10, day: 4, fuel: { AVGAS: 2.9, JETA: 2.4 }, fleet: [], availableMissions: [], acceptedMissions: [], ledger: [], flightLogs: [], dutyLog: [], armedMissions: [], stats: { missionsCompleted: 0, missionsFailed: 0, hoursFlown: 0, totalEarned: 0 } } }
+    expect(migratePersistedState(save, 10).game!.missionBoardTarget).toBe(DEFAULT_MISSION_BOARD_TARGET)
+  })
+
+  it('snaps a hostile persisted target to a legal step', () => {
+    // Hydration is treated as adversarial throughout migratePersistedState. A
+    // hand-edited 5000 that merely "exists" must not survive — advanceDay would
+    // then generate 5000 missions every day.
+    const base = { version: 11, companyName: 'Old Air', regionId: 'outback', homeBaseIcao: 'YBAS', pilotLocationIcao: 'YBAS', balance: 0, reputation: 10, day: 4, fuel: { AVGAS: 2.9, JETA: 2.4 }, fleet: [], availableMissions: [], acceptedMissions: [], ledger: [], flightLogs: [], dutyLog: [], armedMissions: [], stats: { missionsCompleted: 0, missionsFailed: 0, hoursFlown: 0, totalEarned: 0 } }
+    const migrated = (target: number) =>
+      migratePersistedState({ game: { ...base, missionBoardTarget: target } }, 11).game!
+        .missionBoardTarget
+    expect(migrated(5000)).toBe(20)
+    expect(migrated(13)).toBe(15)
+    expect(migrated(-4)).toBe(5)
+    expect(migrated(15)).toBe(15) // a legal value is left alone
+  })
+})
+
+describe('deadline boundary is inclusive (#30)', () => {
+  afterEach(() => useGame.getState().resetGame())
+
+  it('keeps a board posting through the day it expires, and drops it after', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const day = useGame.getState().game!.day
+    useGame.setState((s) => ({
+      game: { ...s.game!, availableMissions: [mission({ id: 'mDue', expiresDay: day + 1 })] },
+    }))
+
+    useGame.getState().advanceDay() // now day + 1: "Due today"
+    expect(useGame.getState().game!.availableMissions.some((m) => m.id === 'mDue')).toBe(true)
+
+    useGame.getState().advanceDay() // now day + 2: past the deadline
+    expect(useGame.getState().game!.availableMissions.some((m) => m.id === 'mDue')).toBe(false)
+  })
+
+  it('keeps an accepted mission through the day it expires, and fails it after', () => {
+    useGame.getState().newGame('Test Air', 'bonanza')
+    const day = useGame.getState().game!.day
+    useGame.setState((s) => ({
+      game: { ...s.game!, acceptedMissions: [mission({ id: 'mAcc', expiresDay: day + 1 })] },
+    }))
+
+    useGame.getState().advanceDay()
+    expect(useGame.getState().game!.acceptedMissions.some((m) => m.id === 'mAcc')).toBe(true)
+    expect(useGame.getState().game!.stats.missionsFailed).toBe(0)
+
+    useGame.getState().advanceDay()
+    expect(useGame.getState().game!.acceptedMissions.some((m) => m.id === 'mAcc')).toBe(false)
+    expect(useGame.getState().game!.stats.missionsFailed).toBe(1)
   })
 })

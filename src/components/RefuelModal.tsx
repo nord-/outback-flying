@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useGame } from '../game/store'
 import { useUI } from './ui'
-import { useSim } from '../sim/useSim'
 import { useSessionState } from '../sim/useSimSession'
 import { getSpec } from '../data/aircraft'
 import { getAirport } from '../data/airports'
@@ -14,8 +13,11 @@ export function RefuelModal({ aircraft, onClose }: { aircraft: OwnedAircraft; on
   const game = useGame((s) => s.game)!
   const refuel = useGame((s) => s.refuel)
   const { notify } = useUI()
-  const { sample } = useSim()
   const session = useSessionState()
+  // session.lastSample is the guarded sample (#28); the raw useSim() stream is
+  // deliberately NOT read here — it still carries the sim's shutdown zeros,
+  // which would render the tank as "0 / 0 L" with the button dead.
+  const sample = session.lastSample
   const spec = getSpec(aircraft.specId)
   const airport = getAirport(aircraft.locationIcao)
 

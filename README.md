@@ -19,9 +19,13 @@ It's a desktop app (Electron) built on a Vite + React + TypeScript core.
 1. **Take a call-out** from the mission board — medevacs, doctor transports,
    patient transfers, supply runs and clinic flights, plus time-critical organ
    transports and emergency medevacs (see below), between real, region-specific
-   airstrips. Each has a distance, seat requirement, urgency, reward and a
-   deadline. Accepting a mission that would breach your duty-time limits (see
-   below) warns you first.
+   airstrips. New postings start close to wherever you currently are, so
+   ferrying to the job doesn't dominate play. Each has a distance, seat
+   requirement, urgency, reward and a deadline. Accepting a mission that would
+   breach your duty-time limits (see below) warns you first. Not interested in
+   one you haven't accepted? **Dismiss** it for a small reputation cost and no
+   money — it isn't a failed mission, and the slot refills next time the board
+   turns over.
 2. **Fly it yourself** in your simulator of choice. With SimConnect connected,
    the flight books itself — the mission arms at off-block and completes when
    you land at the destination (even a running turnaround at an intermediate
@@ -36,7 +40,10 @@ It's a desktop app (Electron) built on a Vite + React + TypeScript core.
 4. **Manage the business** — buy and sell aircraft, repair worn airframes,
    reposition (ferry) aircraft to where the next job is, and watch your cash,
    reputation, duty hours and fuel prices.
-5. **Advance the day** to accrue overheads, expire old jobs and refresh the board.
+5. **Advance the day** to accrue overheads, expire old jobs and refill the
+   board back up to your chosen size — pick 5, 10, 15 or 20 postings from the
+   Missions tab; lowering it never removes a posting already up, the board
+   just stops refilling until it naturally drops below the new target.
 
 You start as a new operation with **your choice of starter aircraft** (Cessna
 152, Cessna 172, Bonanza G36 or Pilatus PC-6 — cheaper aircraft leave more
@@ -87,8 +94,8 @@ better-paying work.
   pickup airstrip and stops when you park at the destination — deliver in time
   and the reward and reputation are yours; miss the window and the cargo is
   lost (no reward, a penalty and a reputation hit). While the flight is under
-  way the dashboard shows an **active mission window** — a map with your live
-  position and route, the destination and the time remaining. They book
+  way the dashboard also shows an **active mission window** — a map with your
+  live position and route, the destination and the time remaining. They book
   themselves through always-on SimConnect tracking, so they're flyable only in
   the Windows desktop app with MSFS connected; emergency medevacs also need a
   larger cabin (Bonanza-class or bigger).
@@ -103,8 +110,9 @@ better-paying work.
   carry across a future region transfer.
 - **Operations map & logbook.** A live map (Leaflet) plots your home base,
   pilot location, fleet and mission routes by urgency; click an airport to see
-  what's on offer there. The logbook lists every completed flight with its
-  recorded track.
+  what's on offer there. While a flight is being tracked over SimConnect, the
+  map also plots the aircraft's live position and the track flown so far. The
+  logbook lists every completed flight with its recorded track.
 - **Everything is saved locally** (IndexedDB, falling back to browser
   `localStorage` if unavailable), so you can close and come back to your
   operation. Flight-log tracks are stored separately from the main save so a
@@ -183,6 +191,23 @@ components only render state and dispatch actions through the Zustand store
   reconciliation with a single writer, and persisted off-field parking. The
   old manual "start recording" step is gone; the honour-mode report remains
   for playing without a sim.
+- **Configurable mission board & dismissible postings** — choose how many
+  postings the board holds (5, 10, 15 or 20, default 10) from the Missions
+  tab; lowering the setting never deletes a posting already up, it just
+  pauses refilling until the board naturally drops below the new target. Any
+  posting you haven't accepted can also be dismissed for a small reputation
+  cost and no money, since you never committed to it.
+- **Missions that start near the pilot** — new postings are weighted toward
+  wherever you currently are (most often your own field, the rest within 500 nm)
+  instead of being scattered across the region, so ferrying to the job no
+  longer dominates play.
+- **Live position on the operations map** — while a flight is tracked over
+  SimConnect, the map plots the aircraft's live position and the track flown
+  so far for any flight, not only inside a time-critical mission's countdown
+  window.
+- **Fixed a "Null Island" glitch** — closing the simulator mid-flight no
+  longer records a phantom leg to the middle of the ocean or strands the
+  aircraft there; affected saves are repaired automatically when loaded.
 
 ### High priority
 
