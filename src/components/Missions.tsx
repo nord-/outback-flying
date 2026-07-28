@@ -9,6 +9,7 @@ import { bearingDeg, compass } from '../game/geo'
 import { estimateDutyMinutes, wouldBeOver, isOverAnyLimit } from '../game/duty'
 import type { Mission } from '../game/types'
 import { FlyModal } from './FlyModal'
+import { OperationsMap } from './OperationsMap'
 import { useNav } from './ui'
 import { useSim } from '../sim/useSim'
 
@@ -208,6 +209,9 @@ export function Missions() {
 
   return (
     <div>
+      <div className="mb">
+        <OperationsMap />
+      </div>
       <h2 className="page-title">Accepted — flight log ({accepted.length})</h2>
       {accepted.length === 0 ? (
         <div className="empty">No accepted missions. Take one from the board below.</div>
