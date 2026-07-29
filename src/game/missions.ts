@@ -54,9 +54,7 @@ const TYPE_CONFIG: TypeConfig[] = [
     narratives: [
       { text: 'A serious workplace injury at a remote site needs urgent evacuation to hospital.', seats: [2] },
       { text: 'A road accident on an isolated route has left a patient in a critical condition.', seats: [2] },
-      {
-        text: 'A child in a remote community has suspected appendicitis and must reach a hospital.',
-      },
+      { text: 'A suspected snake bite victim is deteriorating and needs urgent evacuation.', seats: [2] },
       { text: 'A station hand has broken an arm mustering and needs an X-ray in town.', seats: [1] },
       { text: 'A worker with a deep laceration is stable, but must be seen at the base hospital today.', seats: [1] },
     ],
