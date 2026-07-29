@@ -12,7 +12,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     id: 'c152',
     name: 'Cessna 152',
     category: 'Light piston',
-    seats: 2,
+    seats: 1, // two-seat cockpit is pilot + ONE passenger, not two on top of the pilot (#33)
     cruiseKts: 105,
     rangeNm: 415,
     minRunwayM: 350,
@@ -22,6 +22,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 120000,
     maintPerHour: 35,
     dailyFixedCost: 45,
+    usefulLoadKg: 245, // MTOW 757 kg − empty ≈ 512 kg (C152 published figures)
     simMatch: ['152'],
   },
   {
@@ -38,13 +39,14 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 220000,
     maintPerHour: 45,
     dailyFixedCost: 60,
+    usefulLoadKg: 390, // MTOW 1157 kg − empty ≈ 767 kg (C172S published figures)
     simMatch: ['172', 'skyhawk'],
   },
   {
     id: 'xcub',
     name: 'CubCrafters XCub',
     category: 'Light piston',
-    seats: 2,
+    seats: 1, // tandem two-seater is pilot + ONE passenger, not two on top of the pilot (#33)
     cruiseKts: 130,
     rangeNm: 750,
     minRunwayM: 150,
@@ -54,6 +56,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 380000,
     maintPerHour: 55,
     dailyFixedCost: 70,
+    usefulLoadKg: 493, // CubCrafters: useful load 1088 lb (published XCub figures)
     simMatch: ['xcub', 'x-cub', 'cub'],
   },
   {
@@ -70,13 +73,14 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 480000,
     maintPerHour: 85,
     dailyFixedCost: 120,
+    usefulLoadKg: 636, // Beechcraft: useful payload 1403 lb (published Bonanza G36 figures)
     simMatch: ['bonanza'],
   },
   {
     id: 'baron',
     name: 'Beechcraft Baron G58',
     category: 'High-performance piston',
-    seats: 6,
+    seats: 5, // six-seat cabin is pilot + FIVE passengers, not six on top of the pilot (#33)
     cruiseKts: 200,
     rangeNm: 1000,
     minRunwayM: 650,
@@ -86,13 +90,14 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 700000,
     maintPerHour: 160,
     dailyFixedCost: 190,
+    usefulLoadKg: 765, // MTOW 2495 kg − empty ≈ 1730 kg (Baron G58 published figures)
     simMatch: ['baron'],
   },
   {
     id: 'pc6',
     name: 'Pilatus PC-6 Porter',
     category: 'Turboprop',
-    seats: 9,
+    seats: 6, // bush-configured cabin seats SIX passengers behind the pilot, not nine on top of the pilot (#33)
     cruiseKts: 120,
     rangeNm: 690,
     minRunwayM: 250,
@@ -102,13 +107,16 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 1400000,
     maintPerHour: 180,
     dailyFixedCost: 260,
+    usefulLoadKg: 1000, // Pilatus publishes ≈2381 lb (~1080 kg) payload WITH MAX FUEL, not useful load —
+    // useful load is that figure PLUS the fuel it excludes (~1080 + 640 L × 0.8 kg/L ≈ 1592 kg); 1000 kg
+    // is used anyway as a deliberately conservative round figure, comfortably under that derived number.
     simMatch: ['pc-6', 'pc6', 'porter'],
   },
   {
     id: 'kodiak',
     name: 'Kodiak 100',
     category: 'Turboprop',
-    seats: 9,
+    seats: 10, // high-density cabin seats TEN passengers behind the pilot (#33)
     cruiseKts: 170,
     rangeNm: 1000,
     minRunwayM: 400,
@@ -118,6 +126,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 2000000,
     maintPerHour: 230,
     dailyFixedCost: 310,
+    usefulLoadKg: 1601, // Daher: base aircraft useful load 3530 lb (published Kodiak 100 figures)
     simMatch: ['kodiak'],
   },
   {
@@ -134,6 +143,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 2200000,
     maintPerHour: 240,
     dailyFixedCost: 320,
+    usefulLoadKg: 1830, // MTOW 4110 kg − empty ≈ 2280 kg (Grand Caravan EX published useful load ≈ 4032 lb, utility category)
     simMatch: ['208', 'caravan'],
   },
   {
@@ -150,13 +160,14 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 3600000,
     maintPerHour: 340,
     dailyFixedCost: 480,
+    usefulLoadKg: 2495, // MTOW 6804 kg − empty ≈ 4310 kg (King Air 350i published useful load ≈ 5500 lb)
     simMatch: ['king air', 'kingair', 'b350', '350i'],
   },
   {
     id: 'pc12',
     name: 'Pilatus PC-12 NGX',
     category: 'Turboprop',
-    seats: 9,
+    seats: 8, // typical commuter cabin seats EIGHT passengers behind the pilot, not nine on top of the pilot (#33)
     cruiseKts: 280,
     rangeNm: 1800,
     minRunwayM: 700,
@@ -166,6 +177,7 @@ export const AIRCRAFT_SPECS: AircraftSpec[] = [
     purchaseCost: 4500000,
     maintPerHour: 300,
     dailyFixedCost: 520,
+    usefulLoadKg: 1680, // MTOW 4740 kg − empty ≈ 3060 kg (PC-12 NGX published figures)
     simMatch: ['pc-12', 'pc12'],
   },
 ]

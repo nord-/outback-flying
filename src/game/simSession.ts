@@ -6,6 +6,7 @@ import type { GeoPos, OwnedAircraft, FlightLeg, TrackPoint } from './types'
 import type { SimSample } from '../sim/types'
 import { getSpec } from '../data/aircraft'
 import { distanceNm } from './geo'
+import { loadedKg } from './payload'
 import {
   nearestAirport,
   matchesAircraft,
@@ -51,8 +52,13 @@ export interface SimSessionState {
 
 export type SessionEffect =
   | { kind: 'SYNC_TO_SIM'; fuelL: number }
-  | { kind: 'OFF_BLOCK'; icao: string | null }
+  | { kind: 'OFF_BLOCK'; icao: string | null; loadedKg: number | null }
   | { kind: 'STOP_AT'; icao: string }
+  // Liftoff (#33): arming fires at engine start, so the load measured there can
+  // be stale — the player may load, or unload, while taxiing. The first airborne
+  // sample is the real commit point, and this effect re-stamps every armed
+  // mission with what the aeroplane actually left with.
+  | { kind: 'LOAD_LOCK'; loadedKg: number | null }
   | {
       kind: 'ON_BLOCK'
       leg: FlightLeg
@@ -159,7 +165,11 @@ function enterMatched(
       next = warnOnce(next, effects, 'mid-air-attach',
         'Connected mid-air — the departure field is unknown, so no mission was armed for this flight.')
     } else {
-      effects.push({ kind: 'OFF_BLOCK', icao: nearestAirport(sample.lat, sample.lon, ctx.regionId)?.icao ?? null })
+      effects.push({
+        kind: 'OFF_BLOCK',
+        icao: nearestAirport(sample.lat, sample.lon, ctx.regionId)?.icao ?? null,
+        loadedKg: loadedKg(sample),
+      })
     }
     return next
   }
@@ -244,7 +254,11 @@ export function reduceSession(
       // Off-block (D7/D8): a fresh recorder starts this engine-leg. Seed any
       // outstanding positive divergence (e.g. a failed SYNC_TO_SIM write) as
       // external fuel so it gets billed instead of leaking in for free.
-      effects.push({ kind: 'OFF_BLOCK', icao: nearestAirport(sample.lat, sample.lon, ctx.regionId)?.icao ?? null })
+      effects.push({
+        kind: 'OFF_BLOCK',
+        icao: nearestAirport(sample.lat, sample.lon, ctx.regionId)?.icao ?? null,
+        loadedKg: loadedKg(sample),
+      })
       return {
         state: {
           ...next,
@@ -273,7 +287,12 @@ export function reduceSession(
   next = { ...next, recorder }
 
   if (!sample.onGround) {
-    if (!next.stopArmed) next = { ...next, stopArmed: true }
+    if (!next.stopArmed) {
+      // Liftoff: lock what is aboard (#33). Once per airborne run, because
+      // stopArmed stays true until the next full stop re-arms it.
+      effects.push({ kind: 'LOAD_LOCK', loadedKg: loadedKg(sample) })
+      next = { ...next, stopArmed: true }
+    }
     return { state: next, effects }
   }
 

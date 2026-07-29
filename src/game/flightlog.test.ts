@@ -60,6 +60,10 @@ function legSamples(opts: {
       fuelCapacityGal: 200,
       title,
       atcModel,
+      totalKg: 1250,
+      emptyKg: 900,
+      fuelKg: 165,
+      pilotStationKg: 85,
       ...over,
     })
     t += 1000
@@ -113,6 +117,10 @@ const mk = (over: Partial<SimSample> = {}): SimSample => ({
   fuelCapacityGal: 200,
   title: 'Black Square A36TC Bonanza Professional N3475M',
   atcModel: 'Bonanza',
+  totalKg: 1250,
+  emptyKg: 900,
+  fuelKg: 165,
+  pilotStationKg: 85,
   ...over,
 })
 
@@ -332,9 +340,9 @@ describe('recordSample — multi-leg trip', () => {
 describe('recordSample — edge cases', () => {
   it('records no completed leg when the aircraft never leaves the ground', () => {
     const samples: SimSample[] = [
-      { t: 0, lat: YBAS.lat, lon: YBAS.lon, headingTrue: 0, groundKts: 0, altFt: 0, onGround: true, enginesOn: true, fuelGal: 100, fuelCapacityGal: 200, title: 't', atcModel: 'm' },
-      { t: 1000, lat: YBAS.lat, lon: YBAS.lon, headingTrue: 0, groundKts: 10, altFt: 0, onGround: true, enginesOn: true, fuelGal: 99, fuelCapacityGal: 200, title: 't', atcModel: 'm' },
-      { t: 2000, lat: YBAS.lat, lon: YBAS.lon, headingTrue: 0, groundKts: 0, altFt: 0, onGround: true, enginesOn: true, fuelGal: 99, fuelCapacityGal: 200, title: 't', atcModel: 'm' },
+      { t: 0, lat: YBAS.lat, lon: YBAS.lon, headingTrue: 0, groundKts: 0, altFt: 0, onGround: true, enginesOn: true, fuelGal: 100, fuelCapacityGal: 200, title: 't', atcModel: 'm', totalKg: 1250, emptyKg: 900, fuelKg: 165, pilotStationKg: 85 },
+      { t: 1000, lat: YBAS.lat, lon: YBAS.lon, headingTrue: 0, groundKts: 10, altFt: 0, onGround: true, enginesOn: true, fuelGal: 99, fuelCapacityGal: 200, title: 't', atcModel: 'm', totalKg: 1250, emptyKg: 900, fuelKg: 165, pilotStationKg: 85 },
+      { t: 2000, lat: YBAS.lat, lon: YBAS.lon, headingTrue: 0, groundKts: 0, altFt: 0, onGround: true, enginesOn: true, fuelGal: 99, fuelCapacityGal: 200, title: 't', atcModel: 'm', totalKg: 1250, emptyKg: 900, fuelKg: 165, pilotStationKg: 85 },
     ]
     const s = fold(samples)
     expect(s.legs).toHaveLength(0)
@@ -434,6 +442,10 @@ describe('simCapacityL', () => {
     fuelCapacityGal: 50,
     title: 'Black Square A36TC Bonanza Professional N3475M',
     atcModel: 'Bonanza',
+    totalKg: 1250,
+    emptyKg: 900,
+    fuelKg: 165,
+    pilotStationKg: 85,
     ...over,
   })
 
@@ -502,6 +514,7 @@ describe('isPlausiblePosition / isPlausibleSample (#28)', () => {
     t: 1_000, lat: YBAS.lat, lon: YBAS.lon, headingTrue: 0, groundKts: 0, altFt: 0,
     onGround: true, fuelGal: 40, fuelCapacityGal: 50, enginesOn: false,
     title: 'Black Square A36TC Bonanza Professional N3475M', atcModel: 'Bonanza',
+    totalKg: 1250, emptyKg: 900, fuelKg: 165, pilotStationKg: 85,
     ...over,
   })
 

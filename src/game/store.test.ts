@@ -21,6 +21,7 @@ const mission = (over: Partial<Mission> = {}): Mission => ({
   postedDay: 1,
   expiresDay: 10,
   reputationReward: 2,
+  cargoKg: 40,
   ...over,
 })
 
@@ -68,7 +69,7 @@ describe('migratePersistedState', () => {
     const out = migratePersistedState(legacySave('YBHI'), 1)
     expect(out.game?.homeBaseIcao).toBe('YBAS')
     expect(out.game?.pilotLocationIcao).toBe('YBHI')
-    expect(out.game?.version).toBe(11)
+    expect(out.game?.version).toBe(12)
   })
 
   it('adds the outback region id and synthesises an operator profile', () => {
@@ -104,10 +105,55 @@ describe('migratePersistedState', () => {
 
   it('leaves a save from a newer version untouched', () => {
     const save = legacySave('YBHI')
-    save.game!.version = 12
-    const out = migratePersistedState(save, 12)
-    expect(out.game?.version).toBe(12)
+    save.game!.version = 13
+    const out = migratePersistedState(save, 13)
+    expect(out.game?.version).toBe(13)
     expect(out.game?.homeBaseIcao).toBeUndefined()
+  })
+
+  it('gives pre-cargo missions a PAX-only requirement (v12, #33)', () => {
+    const save = legacySave('YBAS')
+    const legacyMission = { ...mission({ seatsRequired: 2 }) } as Partial<Mission>
+    delete legacyMission.cargoKg
+    save.game!.availableMissions = [legacyMission as Mission]
+    save.game!.acceptedMissions = [{ ...(legacyMission as Mission), id: 'm2' }]
+    const out = migratePersistedState(save, 11)
+    expect(out.game?.version).toBe(12)
+    expect(out.game?.availableMissions[0].cargoKg).toBe(0)
+    expect(out.game?.acceptedMissions[0].cargoKg).toBe(0)
+  })
+
+  it('normalises a corrupt cargo figure instead of trusting it', () => {
+    const save = legacySave('YBAS')
+    save.game!.availableMissions = [{ ...mission(), cargoKg: Number.NaN }]
+    const out = migratePersistedState(save, 11)
+    expect(out.game?.availableMissions[0].cargoKg).toBe(0)
+  })
+
+  it('recovers gracefully when availableMissions is a truthy non-array (hostile input)', () => {
+    const save = legacySave('YBAS')
+    ;(save.game as any).availableMissions = {} // truthy non-array
+    const out = migratePersistedState(save, 11)
+    expect(out.game?.availableMissions).toEqual([])
+  })
+
+  it('filters out null entries in mission lists instead of throwing (hostile input)', () => {
+    const save = legacySave('YBAS')
+    const validMission = mission()
+    save.game!.acceptedMissions = [validMission, null as any, { ...validMission, id: 'm3' }]
+    const out = migratePersistedState(save, 11)
+    expect(out.game?.acceptedMissions).toHaveLength(2)
+    expect(out.game?.acceptedMissions[0].id).toBe('m1')
+    expect(out.game?.acceptedMissions[1].id).toBe('m3')
+    expect(out.game?.acceptedMissions[0].cargoKg).toBe(40)
+    expect(out.game?.acceptedMissions[1].cargoKg).toBe(40)
+  })
+
+  it('normalises negative cargoKg in addition to non-finite values', () => {
+    const save = legacySave('YBAS')
+    save.game!.availableMissions = [{ ...mission(), cargoKg: -50 }]
+    const out = migratePersistedState(save, 11)
+    expect(out.game?.availableMissions[0].cargoKg).toBe(0)
   })
 
   it('normalizes an unknown regionId instead of trusting a corrupt save', () => {
@@ -135,7 +181,7 @@ describe('migratePersistedState', () => {
       { id: 'fl2', day: 3, dutyMinutes: 90 } as never, // free flight, no missionId
     ]
     const out = migratePersistedState(save, 1)
-    expect(out.game?.version).toBe(11)
+    expect(out.game?.version).toBe(12)
     expect(out.game?.dutyLog).toHaveLength(2)
     expect(out.game?.dutyLog[0]).toMatchObject({ day: 2, minutes: 150, kind: 'MISSION', missionId: 'm1' })
     expect(out.game?.dutyLog[1]).toMatchObject({ day: 3, minutes: 90, kind: 'FREE' })
@@ -169,7 +215,7 @@ describe('migratePersistedState', () => {
     expect(out.game!.armedMissions).toEqual([])
     expect(out.game!.pilotOffField).toBeUndefined()
     expect(out.game!.openChain).toBeUndefined()
-    expect(out.game!.version).toBe(11)
+    expect(out.game!.version).toBe(12)
   })
 
   it('v9 drops a legacy plain-string armedMissionIds list instead of guessing its owning aircraft', () => {
@@ -177,7 +223,7 @@ describe('migratePersistedState', () => {
     ;(persisted.game as any).armedMissionIds = ['m1', 'm2']
     const out = migratePersistedState(persisted, 8)
     expect(out.game!.armedMissions).toEqual([])
-    expect(out.game!.version).toBe(11)
+    expect(out.game!.version).toBe(12)
   })
 })
 
@@ -223,8 +269,8 @@ describe('newGame starter selection', () => {
     const ac = useGame.getState().game!.fleet[0]
     const m = mission({ id: 'tc0', type: 'ORGAN_TRANSPORT', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 1, windowMinutes: 40 })
     useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [m] } }))
-    useGame.getState().armMissions(ac.id, 'YBAS', 1_000_000)
-    useGame.getState().stopAt(ac.id, 'YTNK', 1_000_000 + 50 * 60_000) // blows the window: -7 rep
+    useGame.getState().armMissions(ac.id, 'YBAS', { atT: 1_000_000 })
+    useGame.getState().stopAt(ac.id, 'YTNK', { atT: 1_000_000 + 50 * 60_000 }) // blows the window: -7 rep
     const g = useGame.getState().game!
     expect(g.stats.missionsFailed).toBe(1) // proves the -7 branch ran, not a no-op
     expect(g.reputation).toBe(0)
@@ -442,7 +488,7 @@ describe('migratePersistedState catalogue remap', () => {
     const out = migratePersistedState(legacySave('YBAS'), 2)
     // legacySave() builds a fleet aircraft with the removed specId 'c210'
     expect(out.game?.fleet[0].specId).toBe('bonanza')
-    expect(out.game?.version).toBe(11)
+    expect(out.game?.version).toBe(12)
     expect(() => getSpec(out.game!.fleet[0].specId)).not.toThrow()
   })
 
@@ -1104,17 +1150,17 @@ describe('time-critical missions (#11)', () => {
 
   it('armMissions stamps windowEndsAtT from arm time + window for a time-critical mission', () => {
     const { ac } = tcGame()
-    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    useGame.getState().armMissions(ac.id, 'YBAS', { atT: ARM_T })
     const armed = useGame.getState().game!.armedMissions.find((r) => r.missionId === 'tc1')
     expect(armed?.windowEndsAtT).toBe(ARM_T + 40 * 60_000)
   })
 
   it('stopAt within the window pays the reward (made it)', () => {
     const { ac } = tcGame()
-    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    useGame.getState().armMissions(ac.id, 'YBAS', { atT: ARM_T })
     const before = useGame.getState().game!.balance
     const repBefore = useGame.getState().game!.reputation
-    const res = useGame.getState().stopAt(ac.id, 'YTNK', ARM_T + 30 * 60_000) // 30 < 40 min
+    const res = useGame.getState().stopAt(ac.id, 'YTNK', { atT: ARM_T + 30 * 60_000 }) // 30 < 40 min
     const g = useGame.getState().game!
     expect(g.stats.missionsCompleted).toBe(1)
     expect(g.stats.missionsFailed).toBe(0)
@@ -1130,9 +1176,9 @@ describe('time-critical missions (#11)', () => {
     // Established operator, so the full -7 lands clear of the floor at 0 (#23).
     useGame.setState((s) => ({ game: { ...s.game!, reputation: 50 } }))
     const ac = useGame.getState().game!.fleet[0]
-    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    useGame.getState().armMissions(ac.id, 'YBAS', { atT: ARM_T })
     const before = useGame.getState().game!.balance
-    const res = useGame.getState().stopAt(ac.id, 'YTNK', ARM_T + 50 * 60_000) // 50 > 40 min
+    const res = useGame.getState().stopAt(ac.id, 'YTNK', { atT: ARM_T + 50 * 60_000 }) // 50 > 40 min
     const g = useGame.getState().game!
     expect(g.stats.missionsFailed).toBe(1)
     expect(g.stats.missionsCompleted).toBe(0)
@@ -1153,7 +1199,7 @@ describe('time-critical missions (#11)', () => {
 
   it('commitLeg (ON_BLOCK route) settles a time-critical mission within the window', () => {
     const { ac } = tcGame()
-    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    useGame.getState().armMissions(ac.id, 'YBAS', { atT: ARM_T })
     const before = useGame.getState().game!.balance
     useGame.getState().commitLeg({
       aircraftId: ac.id, atT: ARM_T + 30 * 60_000, leg: leg({ blockMinutes: 90 }),
@@ -1168,7 +1214,7 @@ describe('time-critical missions (#11)', () => {
 
   it('commitLeg (ON_BLOCK route) hard-fails a time-critical mission past the window', () => {
     const { ac } = tcGame({ reward: 8000, penalty: 2000 })
-    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    useGame.getState().armMissions(ac.id, 'YBAS', { atT: ARM_T })
     useGame.getState().commitLeg({
       aircraftId: ac.id, atT: ARM_T + 50 * 60_000, leg: leg({ blockMinutes: 90 }),
       simFuelL: 300, pos: { icao: 'YTNK' }, externalFuelL: 0, landings: 1, track: [], simTitle: 'T', simAtcModel: 'M',
@@ -1182,8 +1228,8 @@ describe('time-critical missions (#11)', () => {
 
   it('advanceDay does not re-penalise a time-critical mission already failed at the stop', () => {
     const { ac } = tcGame({ reward: 8000, penalty: 2000 })
-    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
-    useGame.getState().stopAt(ac.id, 'YTNK', ARM_T + 50 * 60_000) // missed
+    useGame.getState().armMissions(ac.id, 'YBAS', { atT: ARM_T })
+    useGame.getState().stopAt(ac.id, 'YTNK', { atT: ARM_T + 50 * 60_000 }) // missed
     const failedBefore = useGame.getState().game!.stats.missionsFailed
     useGame.getState().advanceDay()
     expect(useGame.getState().game!.stats.missionsFailed).toBe(failedBefore)
@@ -1194,7 +1240,7 @@ describe('time-critical missions (#11)', () => {
     useGame.getState().armMissions(ac.id, 'YBAS') // no atT → windowEndsAtT stays undefined
     expect(useGame.getState().game!.armedMissions.find((r) => r.missionId === 'tc1')?.windowEndsAtT).toBeUndefined()
     const before = useGame.getState().game!.balance
-    useGame.getState().stopAt(ac.id, 'YTNK', ARM_T + 999 * 60_000) // far past — but unjudgeable
+    useGame.getState().stopAt(ac.id, 'YTNK', { atT: ARM_T + 999 * 60_000 }) // far past — but unjudgeable
     const g = useGame.getState().game!
     expect(g.stats.missionsCompleted).toBe(1) // benefit of the doubt
     expect(g.stats.missionsFailed).toBe(0)
@@ -1203,7 +1249,7 @@ describe('time-critical missions (#11)', () => {
 
   it('finalizeChain reverts an armed time-critical mission to plain accepted (crash/disconnect recovery)', () => {
     const { ac, m } = tcGame()
-    useGame.getState().armMissions(ac.id, 'YBAS', ARM_T)
+    useGame.getState().armMissions(ac.id, 'YBAS', { atT: ARM_T })
     useGame.getState().beginChain(ac.id, 'T', 'M') // open a chain so finalizeChain has something to close
     useGame.getState().finalizeChain()
     const g = useGame.getState().game!
@@ -1437,5 +1483,330 @@ describe('deadline boundary is inclusive (#30)', () => {
     useGame.getState().advanceDay()
     expect(useGame.getState().game!.acceptedMissions.some((m) => m.id === 'mAcc')).toBe(false)
     expect(useGame.getState().game!.stats.missionsFailed).toBe(1)
+  })
+})
+
+describe('cargo arming gate (#33)', () => {
+  const armed = () => useGame.getState().game!.armedMissions
+
+  it('arms only the nearest deadline when the load cannot carry both missions on a route', () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0]
+    const a = mission({ id: 'A', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 1, cargoKg: 0, expiresDay: 3 })
+    const b = mission({ id: 'B', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 1, cargoKg: 0, expiresDay: 4 })
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [a, b] } }))
+    const { messages } = useGame.getState().armMissions(ac.id, 'YBAS', { loadedKg: 100 })
+    expect(armed().map((r) => r.missionId)).toEqual(['A'])
+    expect(messages.some((m) => m.includes('kg aboard'))).toBe(true)
+    expect(useGame.getState().game!.acceptedMissions.map((m) => m.id).sort()).toEqual(['A', 'B'])
+  })
+
+  it('arms both when the load carries the sum', () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0]
+    const a = mission({ id: 'A', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 1, cargoKg: 0, expiresDay: 3 })
+    const b = mission({ id: 'B', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 1, cargoKg: 0, expiresDay: 4 })
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [a, b] } }))
+    useGame.getState().armMissions(ac.id, 'YBAS', { loadedKg: 170 })
+    expect(armed().map((r) => r.missionId).sort()).toEqual(['A', 'B'])
+  })
+
+  it('arms missions to different destinations even when the load covers only one', () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0]
+    const y = mission({ id: 'Y', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 1, cargoKg: 0 })
+    const z = mission({ id: 'Z', fromIcao: 'YBAS', toIcao: 'YPAD', seatsRequired: 1, cargoKg: 0 })
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [y, z] } }))
+    useGame.getState().armMissions(ac.id, 'YBAS', { loadedKg: 100 })
+    expect(armed().map((r) => r.missionId).sort()).toEqual(['Y', 'Z'])
+  })
+
+  it('stamps the measured load on the armed record, and nothing when unmeasured', () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0]
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [mission({ cargoKg: 0 })] } }))
+    useGame.getState().armMissions(ac.id, 'YBAS', { loadedKg: 140 })
+    expect(armed()[0].loadedKg).toBe(140)
+
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac2 = useGame.getState().game!.fleet[0]
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [mission({ cargoKg: 0 })] } }))
+    useGame.getState().armMissions(ac2.id, 'YBAS')
+    expect(armed()[0].loadedKg).toBeUndefined()
+  })
+})
+
+// R2-R5 (#33 final review): the anti-exploit that makes the whole cargo
+// feature hold up. Arming now happens ONLY at engine start (armMissions), and
+// the budget it judges against is what's aboard MINUS what this aircraft
+// already has armed on any route — not just a per-call snapshot.
+describe('cargo committed-budget gate (#33 review)', () => {
+  it("the owner's worked example: mission 1's cargo, still aboard from A, shrinks the budget at B", () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0] // starts at YBAS ("A")
+    const m1 = mission({ id: 'm1', fromIcao: 'YBAS', toIcao: 'YCBP', seatsRequired: 0, cargoKg: 50 }) // A→C
+    const m2 = mission({ id: 'm2', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 0, cargoKg: 50 }) // A→B
+    const m3 = mission({ id: 'm3', fromIcao: 'YTNK', toIcao: 'YCBP', seatsRequired: 0, cargoKg: 50 }) // B→C
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [m1, m2, m3] } }))
+
+    // Engine start at A, 100 kg aboard: 1 and 2 are each alone on their own
+    // route (different destinations), so both arm.
+    useGame.getState().armMissions(ac.id, 'YBAS', { loadedKg: 100 })
+    expect(useGame.getState().game!.armedMissions.map((r) => r.missionId).sort()).toEqual(['m1', 'm2'])
+
+    // Land at B, block on (a plain stop — no re-arming happens here, R2):
+    // mission 2 completes. The 100 kg reading is untouched.
+    useGame.getState().stopAt(ac.id, 'YTNK')
+    let g = useGame.getState().game!
+    expect(g.acceptedMissions.map((m) => m.id).sort()).toEqual(['m1', 'm3'])
+    expect(g.armedMissions.map((r) => r.missionId)).toEqual(['m1'])
+
+    // Engine start at B, still 100 kg aboard: mission 1's 50 kg is still
+    // physically in the cabin (R3), so the free budget is 100 - 50 = 50 kg —
+    // exactly mission 3's 50 kg. It arms.
+    useGame.getState().armMissions(ac.id, 'YTNK', { loadedKg: 100 })
+    g = useGame.getState().game!
+    expect(g.armedMissions.map((r) => r.missionId).sort()).toEqual(['m1', 'm3'])
+
+    // Land at C: both mission 1 and mission 3 complete.
+    useGame.getState().stopAt(ac.id, 'YCBP')
+    g = useGame.getState().game!
+    expect(g.acceptedMissions).toHaveLength(0)
+    expect(g.armedMissions).toHaveLength(0)
+    expect(g.stats.missionsCompleted).toBe(3)
+  })
+
+  it("the mission-4 variant: a same-route job needing more than the free budget is refused, its cheaper sibling still arms", () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0]
+    const m1 = mission({ id: 'm1', fromIcao: 'YBAS', toIcao: 'YCBP', seatsRequired: 0, cargoKg: 50 })
+    const m2 = mission({ id: 'm2', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 0, cargoKg: 50 })
+    const m3 = mission({ id: 'm3', fromIcao: 'YTNK', toIcao: 'YCBP', seatsRequired: 0, cargoKg: 50, expiresDay: 5 })
+    // Top priority at B (expires today) but needs more than the 50 kg free.
+    const m4 = mission({ id: 'm4', fromIcao: 'YTNK', toIcao: 'YCBP', seatsRequired: 0, cargoKg: 75, expiresDay: 1 })
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [m1, m2, m3, m4] } }))
+
+    useGame.getState().armMissions(ac.id, 'YBAS', { loadedKg: 100 })
+    useGame.getState().stopAt(ac.id, 'YTNK') // completes m2
+
+    // Budget at B = 100 - 50 (m1 still armed) = 50 kg. m4 (75 kg) does NOT
+    // arm despite being top priority; m3 (50 kg) does.
+    const { messages } = useGame.getState().armMissions(ac.id, 'YTNK', { loadedKg: 100 })
+    const g = useGame.getState().game!
+    expect(g.armedMissions.map((r) => r.missionId).sort()).toEqual(['m1', 'm3'])
+    expect(g.acceptedMissions.some((m) => m.id === 'm4')).toBe(true) // refused, not lost
+    expect(messages.some((msg) => msg.includes('needs 75 kg'))).toBe(true)
+  })
+
+  it('regression (review path 1): a second engine-start arming pass on the same route no longer both-arms in full', () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0]
+    const A = mission({ id: 'A', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 0, cargoKg: 85 })
+    const B = mission({ id: 'B', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 0, cargoKg: 85 })
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [A] } }))
+
+    // First engine start: A is the only candidate on its route — it arms,
+    // using exactly the 85 kg aboard.
+    useGame.getState().armMissions(ac.id, 'YBAS', { loadedKg: 85 })
+    expect(useGame.getState().game!.armedMissions.map((r) => r.missionId)).toEqual(['A'])
+
+    // The player accepts B on the SAME route, then shuts down and restarts —
+    // A's 85 kg never left the aeroplane, so the sim still reports 85 kg.
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [...s.game!.acceptedMissions, B] } }))
+    useGame.getState().armMissions(ac.id, 'YBAS', { loadedKg: 85 })
+
+    const g = useGame.getState().game!
+    // B must NOT arm: A already committed all 85 kg, leaving 0 kg free — the
+    // exploit this review closed would have armed B here at full reward.
+    expect(g.armedMissions.map((r) => r.missionId)).toEqual(['A'])
+    expect(g.acceptedMissions.some((m) => m.id === 'B')).toBe(true)
+
+    // Settle at the destination: only A can possibly pay out, since B never
+    // armed. The balance must reflect exactly ONE reward — the exploit this
+    // review closed would have armed and paid B too, doubling the payout off
+    // one 85 kg load.
+    const before = useGame.getState().game!.balance
+    useGame.getState().stopAt(ac.id, 'YTNK')
+    const settled = useGame.getState().game!
+    expect(settled.balance).toBe(before + A.reward)
+  })
+
+  it('regression (review path 3): stopAt no longer arms a fresh mission departing the field it just parked at', () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0]
+    const inbound = mission({ id: 'in', fromIcao: 'YBAS', toIcao: 'YTNK', seatsRequired: 0, cargoKg: 0 })
+    const outbound = mission({ id: 'out', fromIcao: 'YTNK', toIcao: 'YCBP', seatsRequired: 0, cargoKg: 0 })
+    useGame.setState((s) => ({
+      game: {
+        ...s.game!,
+        acceptedMissions: [inbound, outbound],
+        armedMissions: [{ missionId: 'in', aircraftId: ac.id }],
+      },
+    }))
+
+    useGame.getState().stopAt(ac.id, 'YTNK') // completes "in"; must not arm "out"
+    const g = useGame.getState().game!
+    expect(g.armedMissions.some((r) => r.missionId === 'out')).toBe(false)
+    expect(g.acceptedMissions.some((m) => m.id === 'out')).toBe(true)
+  })
+
+  it('regression (review path 2): commitLeg no longer arms a fresh mission departing the field it just landed at', () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0]
+    const outbound = mission({ id: 'out', fromIcao: 'YTNK', toIcao: 'YCBP', seatsRequired: 0, cargoKg: 0 })
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [outbound] } }))
+
+    useGame.getState().commitLeg({
+      aircraftId: ac.id,
+      leg: leg({ toIcao: 'YTNK' }),
+      simFuelL: 300,
+      pos: { icao: 'YTNK' },
+      externalFuelL: 0,
+      landings: 1,
+      track: [],
+      simTitle: 'T',
+      simAtcModel: 'M',
+    })
+
+    const g = useGame.getState().game!
+    expect(g.armedMissions.some((r) => r.missionId === 'out')).toBe(false)
+    expect(g.acceptedMissions.some((m) => m.id === 'out')).toBe(true)
+  })
+})
+
+describe('lockArmedLoad (#33)', () => {
+  it('overwrites the arm-time stamp with what the aircraft left with', () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0]
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [mission({ cargoKg: 0 })] } }))
+    useGame.getState().armMissions(ac.id, 'YBAS', { loadedKg: 0 }) // loaded nothing at engine start
+    useGame.getState().lockArmedLoad(ac.id, 200) // …then loaded up before rolling
+    expect(useGame.getState().game!.armedMissions[0].loadedKg).toBe(200)
+  })
+
+  it('leaves a good stamp alone when the reading is unusable', () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0]
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [mission({ cargoKg: 0 })] } }))
+    useGame.getState().armMissions(ac.id, 'YBAS', { loadedKg: 200 })
+    useGame.getState().lockArmedLoad(ac.id, null)
+    expect(useGame.getState().game!.armedMissions[0].loadedKg).toBe(200)
+  })
+
+  it('only touches the calling aircraft records', () => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0]
+    useGame.setState((s) => ({ game: { ...s.game!, acceptedMissions: [mission({ cargoKg: 0 })] } }))
+    useGame.getState().armMissions(ac.id, 'YBAS', { loadedKg: 120 })
+    useGame.getState().lockArmedLoad('someone-else', 999)
+    expect(useGame.getState().game!.armedMissions[0].loadedKg).toBe(120)
+  })
+})
+
+describe('underload settlement (#33)', () => {
+  const setup = (over: Partial<Mission>, loadedKg?: number) => {
+    useGame.getState().newGame('Test Air', 'pc6')
+    const ac = useGame.getState().game!.fleet[0]
+    const m = mission({ fromIcao: 'YBAS', toIcao: 'YTNK', reward: 2000, ...over })
+    useGame.setState((s) => ({ game: { ...s.game!, reputation: 50, acceptedMissions: [m] } }))
+    useGame.getState().armMissions(ac.id, 'YBAS', loadedKg == null ? undefined : { loadedKg })
+    return { ac, m }
+  }
+
+  it('pays the loaded fraction and docks reputation when short', () => {
+    const { ac } = setup({ seatsRequired: 1, cargoKg: 40, reputationReward: 3 }, 40) // needs 125
+    const before = useGame.getState().game!.balance
+    const { messages } = useGame.getState().stopAt(ac.id, 'YTNK')
+    const g = useGame.getState().game!
+    const paid = g.ledger.find((e) => e.category === 'MISSION')!
+    expect(paid.amount).toBe(Math.round(2000 * (40 / 125))) // 640
+    expect(g.balance).toBe(before + 640)
+    expect(g.reputation).toBe(50 + 3 - 2)
+    expect(messages.some((t) => t.includes('underload'))).toBe(true)
+    // 40 / 125 = 32% exactly — pins the reported share, not just its presence.
+    expect(messages.some((t) => t.includes('32%'))).toBe(true)
+    expect(paid.description).toContain('32%')
+    expect(g.stats.missionsCompleted).toBe(1)
+    expect(g.openChain!.earnings).toBe(640)
+  })
+
+  it('pays in full for a full load and keeps the whole reputation bonus', () => {
+    const { ac } = setup({ seatsRequired: 1, cargoKg: 40, reputationReward: 3 }, 125)
+    useGame.getState().stopAt(ac.id, 'YTNK')
+    const g = useGame.getState().game!
+    expect(g.ledger.find((e) => e.category === 'MISSION')!.amount).toBe(2000)
+    expect(g.reputation).toBe(53)
+  })
+
+  it('pays in full when overloaded', () => {
+    const { ac } = setup({ seatsRequired: 1, cargoKg: 40 }, 900)
+    useGame.getState().stopAt(ac.id, 'YTNK')
+    expect(useGame.getState().game!.ledger.find((e) => e.category === 'MISSION')!.amount).toBe(2000)
+  })
+
+  it('pays in full when the load was never measured', () => {
+    const { ac } = setup({ seatsRequired: 1, cargoKg: 40 })
+    useGame.getState().stopAt(ac.id, 'YTNK')
+    expect(useGame.getState().game!.ledger.find((e) => e.category === 'MISSION')!.amount).toBe(2000)
+  })
+
+  // Deliberately un-floored: a floor would make underload free on exactly the
+  // missions a player flies most.
+  it('lets a routine job net negative reputation when flown short', () => {
+    const { ac } = setup({ seatsRequired: 2, cargoKg: 0, reputationReward: 1 }, 40) // needs 170
+    useGame.getState().stopAt(ac.id, 'YTNK')
+    expect(useGame.getState().game!.reputation).toBe(50 + 1 - 2)
+  })
+
+  it('does not scale XP — the leg was still flown', () => {
+    const short = setup({ seatsRequired: 1, cargoKg: 40 }, 40) // ratio 40/125
+    const beforeShort = useGame.getState().operator!.xp
+    useGame.getState().stopAt(short.ac.id, 'YTNK')
+    const xpShort = useGame.getState().operator!.xp - beforeShort
+
+    const full = setup({ seatsRequired: 1, cargoKg: 40 }, 125) // same mission, ratio 1
+    const beforeFull = useGame.getState().operator!.xp
+    useGame.getState().stopAt(full.ac.id, 'YTNK')
+    const xpFull = useGame.getState().operator!.xp - beforeFull
+
+    // Equality is the claim: XP earned must be identical regardless of load,
+    // not merely nonzero (a scaled-XP mutant would still pass a ">0" check).
+    expect(xpShort).toBeGreaterThan(0)
+    expect(xpShort).toBe(xpFull)
+  })
+
+  it('judges a mission armed in an earlier session on the load it actually left with', () => {
+    const { ac } = setup({ seatsRequired: 1, cargoKg: 40 }, 0) // armed empty, yesterday
+    useGame.getState().lockArmedLoad(ac.id, 125) // loaded properly this session
+    useGame.getState().stopAt(ac.id, 'YTNK')
+    expect(useGame.getState().game!.ledger.find((e) => e.category === 'MISSION')!.amount).toBe(2000)
+  })
+
+  it('withholds the scaled reward — not the full reward — when short-loaded and over a duty limit', () => {
+    const { ac } = setup({ seatsRequired: 1, cargoKg: 40 }, 40) // needs 125, ratio 0.32, payable 640
+    useGame.setState((s) => ({
+      game: { ...s.game!, dutyLog: [{ id: 'pre', day: 1, minutes: 700, kind: 'MISSION' }] },
+    }))
+    const before = useGame.getState().game!.balance
+    const totalEarnedBefore = useGame.getState().game!.stats.totalEarned
+    useGame.getState().stopAt(ac.id, 'YTNK')
+    const g = useGame.getState().game!
+    // A mutant that credits the scaled 640 but withholds the full 2000 nets a
+    // -1360 phantom debit — both balance and totalEarned must round-trip to 0.
+    expect(g.balance).toBe(before)
+    expect(g.stats.totalEarned).toBe(totalEarnedBefore)
+    expect(g.ledger.some((l) => l.category === 'PENALTY' && l.amount === -640)).toBe(true)
+  })
+
+  it('never reports "paid 100%" for a load that is short by more than the tolerance', () => {
+    // 497.6 of 500 kg: short by 2.4 kg, just over PAYLOAD_TOLERANCE_KG (2), so
+    // ratio is 0.9952 — Math.round would read that as 100%, contradicting the
+    // 1990-of-2000 payout right next to it.
+    const { ac } = setup({ seatsRequired: 0, cargoKg: 500 }, 497.6)
+    const { messages } = useGame.getState().stopAt(ac.id, 'YTNK')
+    const g = useGame.getState().game!
+    expect(g.ledger.find((e) => e.category === 'MISSION')!.amount).toBe(1990)
+    expect(messages.some((t) => t.includes('100%'))).toBe(false)
+    expect(messages.some((t) => t.includes('99%'))).toBe(true)
   })
 })

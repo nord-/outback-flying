@@ -39,6 +39,16 @@ export interface AircraftSpec {
   purchaseCost: number
   maintPerHour: number // maintenance $ accrued per flight hour
   dailyFixedCost: number // hangar + insurance per day owned
+  // Maximum payload excluding fuel (MTOW − empty weight), kg: pilot + PAX +
+  // freight, wherever it is stowed. One figure, because weight is weight — a
+  // separate "cargo hold" allowance would double-count the same kilograms.
+  // Full-fuel payload needs no field of its own: it is usefulLoadKg minus
+  // fuelCapacityL × fuel density (verified against CubCrafters' published XCub
+  // figures — 493 kg useful, 190 L AVGAS ≈ 137 kg, 356 kg vs 360 kg published).
+  // Feeds the freight cap in missions.ts. The game NEVER enforces it: whether
+  // an aircraft can actually get airborne on a given load and fuel state is the
+  // pilot's problem in the simulator.
+  usefulLoadKg: number
   // Lowercase keywords matched against the sim's reported ATC MODEL / TITLE
   // (see game/flightlog.ts matchesAircraft) so a real-world variant (e.g. a
   // Bonanza A36) is accepted for this spec (e.g. the G36) — issue #9's
@@ -80,6 +90,9 @@ export interface Mission {
   toIcao: string
   distanceNm: number
   seatsRequired: number
+  // Freight/equipment aboard beyond the passengers, kg (#33). PAX weight is not
+  // stored — game/payload.ts derives it from seatsRequired.
+  cargoKg: number
   urgency: Urgency
   reward: number
   penalty: number // paid if the mission expires unaccepted-after-accept or fails
@@ -211,6 +224,12 @@ export interface ArmedMission {
   // aircraft must be parked at the destination, stamped when the mission arms
   // at its origin. Absent for ordinary missions.
   windowEndsAtT?: number
+  // The load (kg, pilot excluded) this mission is judged against (#33). First
+  // stamped when the mission arms, then overwritten at liftoff by
+  // lockArmedLoad — arming happens at engine start, which is too early to be
+  // the final word. Absent = never measured (honour play, or no sim): settles
+  // at full reward.
+  loadedKg?: number
 }
 
 export interface GameState {
@@ -231,7 +250,7 @@ export interface GameState {
   ledger: LedgerEntry[]
   flightLogs: FlightLogSummary[]
   dutyLog: DutyEntry[]
-  armedMissions: ArmedMission[] // accepted missions currently "underway" (armed at off-block/stop — D8)
+  armedMissions: ArmedMission[] // accepted missions currently "underway" (armed at off-block only — D8, R2 #33 review)
   openChain?: OpenChain
   stats: {
     missionsCompleted: number

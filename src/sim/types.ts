@@ -16,6 +16,13 @@ export interface SimSample {
   atcModel: string // ATC model — the clean family name, preferred for matching
   fuelCapacityGal: number // total fuel capacity, gallons
   enginesOn: boolean // any of GENERAL ENG COMBUSTION:1..4 — false once all engines are shut down
+  // Payload weights (#33). Kilograms straight from the bridge so no layer above
+  // has to convert. `pilotStationWeight:1` is the pilot seat by sim convention —
+  // game/payload.ts subtracts it so the pilot is never counted as cargo.
+  totalKg: number // TOTAL WEIGHT
+  emptyKg: number // EMPTY WEIGHT — dry, no fuel, no payload
+  fuelKg: number // FUEL TOTAL QUANTITY WEIGHT
+  pilotStationKg: number // PAYLOAD STATION WEIGHT:1
 }
 
 /** Renderer-facing connection status. 'unavailable' is web-build only. */

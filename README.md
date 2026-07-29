@@ -187,10 +187,12 @@ components only render state and dispatch actions through the Zustand store
   planning and fuel stops are part of the job.
 - **Always-on sim tracking** — with SimConnect connected, flights book
   themselves: engine-driven off-block/on-block legs, automatic mission
-  arming/completion (running turnarounds included), game↔sim fuel-state
-  reconciliation with a single writer, and persisted off-field parking. The
-  old manual "start recording" step is gone; the honour-mode report remains
-  for playing without a sim.
+  arming at engine start and completion on arrival, game↔sim fuel-state
+  reconciliation with a single writer, and persisted off-field parking. A
+  running turnaround completes what's aboard but won't pick up a new job —
+  shut down to load one, same as loading in the sim. The old manual "start
+  recording" step is gone; the honour-mode report remains for playing
+  without a sim.
 - **Configurable mission board & dismissible postings** — choose how many
   postings the board holds (5, 10, 15 or 20, default 10) from the Missions
   tab; lowering the setting never deletes a posting already up, it just

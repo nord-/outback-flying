@@ -12,6 +12,7 @@ const sample = (over: Partial<SimSample> = {}): SimSample => ({
   t: 0, lat: YBAS.lat, lon: YBAS.lon, headingTrue: 0, groundKts: 0, altFt: 0,
   onGround: true, fuelGal: 40, fuelCapacityGal: 50, enginesOn: false,
   title: 'Black Square A36TC Bonanza Professional N3475M', atcModel: 'Bonanza',
+  totalKg: 1250, emptyKg: 900, fuelKg: 165, pilotStationKg: 85,
   ...over,
 })
 
@@ -220,7 +221,7 @@ describe('fuel authority phases (D3/D7)', () => {
   it('off-block: engine start on ground emits OFF_BLOCK with the field and flips to SIM_ACTIVE', () => {
     const { state, effects } = run([sample({ t: 0 }), sample({ t: 1000, enginesOn: true })], ctx())
     expect(state.phase).toBe('SIM_ACTIVE')
-    expect(effects.find((e) => e.kind === 'OFF_BLOCK')).toEqual({ kind: 'OFF_BLOCK', icao: 'YBAS' })
+    expect(effects.find((e) => e.kind === 'OFF_BLOCK')).toMatchObject({ kind: 'OFF_BLOCK', icao: 'YBAS' })
   })
 
   it('on-block: shutdown after a flight emits ON_BLOCK with sim fuel, position and external fuel, and returns to GROUND_SECURE', () => {
@@ -306,5 +307,45 @@ describe('implausible samples are dropped (#28)', () => {
     expect(unloaded.effects).toEqual([])
     expect(unloaded.state.phase).toBe('SIM_ACTIVE')
     expect(unloaded.state.recorder?.currentLeg).toBeTruthy() // still open, not closed at 0,0
+  })
+
+  describe('payload measurement (#33)', () => {
+    const airborne = { onGround: false, enginesOn: true, groundKts: 90, altFt: 1500 }
+
+    it('carries the measured load on off-block', () => {
+      const secured = reduceSession(initSessionState(), sample(), ctx()).state
+      const { effects } = reduceSession(secured, sample({ enginesOn: true }), ctx())
+      const off = effects.find((e) => e.kind === 'OFF_BLOCK')
+      expect(off).toMatchObject({ kind: 'OFF_BLOCK', loadedKg: 100 })
+    })
+
+    it('reports an unloading simulator as an unknown load, not an empty one', () => {
+      const secured = reduceSession(initSessionState(), sample(), ctx()).state
+      const bad = sample({ enginesOn: true, totalKg: 0, emptyKg: 0, fuelKg: 0, pilotStationKg: 0 })
+      const { effects } = reduceSession(secured, bad, ctx())
+      expect(effects.find((e) => e.kind === 'OFF_BLOCK')).toMatchObject({ loadedKg: null })
+    })
+
+    // Arming happens at engine start, so loading after startup must still count.
+    // Liftoff is the real commit point.
+    it('locks the load once, on the first airborne sample', () => {
+      const secured = reduceSession(initSessionState(), sample(), ctx()).state
+      const rolling = reduceSession(secured, sample({ enginesOn: true }), ctx()).state
+      const up = reduceSession(rolling, sample({ ...airborne, totalKg: 1400 }), ctx())
+      expect(up.effects.find((e) => e.kind === 'LOAD_LOCK')).toMatchObject({ loadedKg: 250 })
+
+      const stillUp = reduceSession(up.state, sample({ ...airborne, t: 1000, totalKg: 1400 }), ctx())
+      expect(stillUp.effects.some((e) => e.kind === 'LOAD_LOCK')).toBe(false)
+    })
+
+    it('reports the stop without a load — STOP_AT no longer arms anything', () => {
+      let s = reduceSession(initSessionState(), sample(), ctx()).state
+      s = reduceSession(s, sample({ enginesOn: true }), ctx()).state
+      s = reduceSession(s, sample({ ...airborne, t: 1000 }), ctx()).state
+      const arrival = { t: 2000, lat: YTNK.lat, lon: YTNK.lon, enginesOn: true, onGround: true, groundKts: 0 }
+      const { effects } = reduceSession(s, sample(arrival), ctx())
+      expect(effects.find((e) => e.kind === 'STOP_AT')).toMatchObject({ icao: 'YTNK' })
+      expect(effects.find((e) => e.kind === 'STOP_AT')).not.toHaveProperty('loadedKg')
+    })
   })
 })

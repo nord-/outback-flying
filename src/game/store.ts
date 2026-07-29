@@ -30,8 +30,9 @@ import {
   refuelCost,
 } from './economy'
 import { landingWear } from './fields'
+import { planLoad, missionPayload, payoutRatio, UNDERLOAD_REP_PENALTY } from './payload'
 
-const SAVE_VERSION = 11 // v7 = fuel tanks; v8 = always-on sim tracking (#20); v9 = per-aircraft armed missions (#22 review); v10 = time-critical missions (#11); v11 = Null Island scrub (#28) + configurable board size (#30)
+const SAVE_VERSION = 12 // v7 = fuel tanks; v8 = always-on sim tracking (#20); v9 = per-aircraft armed missions (#22 review); v10 = time-critical missions (#11); v11 = Null Island scrub (#28) + configurable board size (#30); v12 = cargo weights (#33)
 const SAVE_KEY = 'outback-flying-save'
 // Board size is the player's call (#30) — a bigger board means more choice and
 // less ferrying, at the cost of a busier screen.
@@ -119,7 +120,12 @@ export interface PersistedSave {
  *    `locationIcao` on an on-block at a catalogued field, so after a running
  *    stop it names an earlier field — "recovering" an off-field position from
  *    it would teleport the aircraft. A stuck save recovers in-game instead,
- *    via repositionAircraft, which accepts an off-field origin. */
+ *    via repositionAircraft, which accepts an off-field origin.
+ *  - v12: missions gain cargoKg. A pre-cargo posting keeps its seat count and
+ *    so acquires a PAX-only requirement — the honest reading of a mission that
+ *    always carried people. Armed records have no loadedKg and therefore settle
+ *    at full reward: they were armed under the old rules and are not punished
+ *    retroactively. */
 export function migratePersistedState(persisted: unknown, version: number): PersistedSave {
   const state = persisted as PersistedSave
   const g = state?.game
@@ -204,6 +210,22 @@ export function migratePersistedState(persisted: unknown, version: number): Pers
   g.missionBoardTarget = g.missionBoardTarget
     ? snapBoardTarget(g.missionBoardTarget)
     : DEFAULT_MISSION_BOARD_TARGET
+
+  // Cargo weights (v12, #33). A missing figure is an old posting; a non-finite
+  // or negative one is a corrupt or hand-edited save. All of them read as "no
+  // freight", which missionPayload then reduces to a PAX-only requirement.
+  // The Array.isArray guards are about hostile input, not save history — same
+  // reasoning as the v11 step above: a mission list that is not an array, or
+  // that holds a null entry, would throw here and brick hydration outright,
+  // and no released save has either shape. A corrupt board is recoverable in
+  // game (advanceDay refills it); an unopenable save is not.
+  const scrubCargo = (list: unknown): Mission[] =>
+    (Array.isArray(list) ? list : []).filter((m): m is Mission => !!m && typeof m === 'object')
+  g.availableMissions = scrubCargo(g.availableMissions)
+  g.acceptedMissions = scrubCargo(g.acceptedMissions)
+  for (const m of [...g.availableMissions, ...g.acceptedMissions]) {
+    if (!Number.isFinite(m.cargoKg) || m.cargoKg < 0) m.cargoKg = 0
+  }
 
   g.version = SAVE_VERSION
   return state
@@ -322,8 +344,9 @@ interface Store {
   // sim session (#20)
   beginChain: (aircraftId: string, simTitle: string, simAtcModel: string) => void
   commitLeg: (input: CommitLegInput) => { messages: string[] }
-  stopAt: (aircraftId: string, icao: string, atT?: number) => { messages: string[] }
-  armMissions: (aircraftId: string, icao: string, atT?: number) => { messages: string[] }
+  stopAt: (aircraftId: string, icao: string, opts?: StopOptions) => { messages: string[] }
+  armMissions: (aircraftId: string, icao: string, opts?: ArmOptions) => { messages: string[] }
+  lockArmedLoad: (aircraftId: string, loadedKg: number | null) => void
   finalizeChain: () => void
 }
 
@@ -371,25 +394,88 @@ function applyDuty(
   return { factor, withheld }
 }
 
-/** Arm every accepted mission departing `icao` that the aircraft can seat (D8).
- *  Armed missions are tagged with `aircraftId` so settlement only pays out to
- *  the aircraft that actually carried the mission (#22 review). */
-function armInto(g: GameState, aircraftId: string, icao: string, atT?: number): string[] {
+export interface ArmOptions {
+  atT?: number
+  loadedKg?: number | null
+}
+
+/** `stopAt`/`commitLeg` no longer arm anything (R2, #33 review — arming is
+ *  engine-start-only), so their shared settlement path only ever needs the
+ *  stop time for time-critical judging. A narrower type than `ArmOptions`
+ *  keeps that honest instead of carrying a `loadedKg` neither call site uses. */
+interface StopOptions {
+  atT?: number
+}
+
+/** Arm every accepted mission departing `icao` that the aircraft can seat and
+ *  the load can carry (D8, #33). Armed missions are tagged with `aircraftId` so
+ *  settlement only pays out to the aircraft that actually carried the mission
+ *  (#22 review), and with the measured load so a short delivery can be priced.
+ *  This is now the ONLY place a mission arms (R2, #33 review) — `settleStop`
+ *  used to arm too, at block-on and at a running full stop, which let cargo
+ *  already aboard be measured twice: once here, and once more at the next
+ *  engine start with a candidate list that had quietly dropped the mission
+ *  this function already armed. */
+function armInto(g: GameState, aircraftId: string, icao: string, opts: ArmOptions = {}): string[] {
   const ac = g.fleet.find((a) => a.id === aircraftId)
   if (!ac) return []
   const spec = getSpec(ac.specId)
+  const { atT, loadedKg = null } = opts
   const messages: string[] = []
+
+  // R3 (#33 review): cargo this aircraft already has armed is physically in
+  // the cabin and can't be unloaded to make room — it eats into the budget
+  // regardless of which route it's bound for. Summed here (not read off a
+  // stored total) so it always reflects the current armedMissions list.
+  const committedKg = g.armedMissions
+    .filter((r) => r.aircraftId === aircraftId)
+    .reduce((sum, r) => {
+      const armed = g.acceptedMissions.find((m) => m.id === r.missionId)
+      return armed ? sum + missionPayload(armed).totalKg : sum
+    }, 0)
+
+  // Seats and duplicates first — those are properties of the mission and the
+  // aeroplane. What is left competes for the kilograms actually aboard.
+  const candidates: Mission[] = []
   for (const m of g.acceptedMissions) {
     if (m.fromIcao !== icao || g.armedMissions.some((r) => r.missionId === m.id)) continue
     if (spec.seats < m.seatsRequired) {
       messages.push(`"${m.title}" needs ${m.seatsRequired} seats — ${spec.name} has ${spec.seats}. Not underway.`)
       continue
     }
+    candidates.push(m)
+  }
+
+  for (const entry of planLoad(candidates, loadedKg, committedKg)) {
+    const m = entry.mission
+    if (!entry.arms) {
+      // planLoad only ever refuses a candidate when the load WAS measured
+      // (a null load arms everything), so loadedKg is a number here — the
+      // `?? 0` this used to carry could never actually fire.
+      const aboardKg = loadedKg as number
+      // Say so plainly when the refusal actually turns on committed cargo
+      // rather than the raw reading (R3, #33 review) — otherwise "only 100 kg
+      // aboard" reads as a lie the moment 50 of those kg belong to a mission
+      // already underway from a different field.
+      const aboardPhrase =
+        committedKg > 0
+          ? `only ${Math.round(Math.max(0, aboardKg - committedKg))} kg free (${Math.round(aboardKg)} kg aboard, ${Math.round(committedKg)} kg already committed)`
+          : `only ${Math.round(aboardKg)} kg aboard`
+      messages.push(
+        `"${m.title}" needs ${Math.round(entry.requiredKg)} kg, and ${Math.round(entry.cumulativeKg)} kg total for ${m.toIcao} — ${aboardPhrase}. Not underway.`
+      )
+      continue
+    }
     // Time-critical (#11): stamp the deadline the moment the mission arms at
     // its origin — the countdown includes the ground time before departure.
     const windowEndsAtT =
       m.windowMinutes != null && atT != null ? atT + m.windowMinutes * 60_000 : undefined
-    g.armedMissions.push({ missionId: m.id, aircraftId, ...(windowEndsAtT != null ? { windowEndsAtT } : {}) })
+    g.armedMissions.push({
+      missionId: m.id,
+      aircraftId,
+      ...(windowEndsAtT != null ? { windowEndsAtT } : {}),
+      ...(loadedKg != null ? { loadedKg } : {}),
+    })
     messages.push(
       m.windowMinutes != null
         ? `⏱ Time-critical underway: ${m.title} — ${m.windowMinutes} min to reach ${m.toIcao}.`
@@ -399,16 +485,23 @@ function armInto(g: GameState, aircraftId: string, icao: string, atT?: number): 
   return messages
 }
 
-/** Complete-then-arm at a full stop (D8). Mutates g; returns updated operator.
- *  Only settles missions armed by THIS aircraft — a different aircraft merely
- *  landing at the same destination can't collect a reward it didn't carry the
- *  mission for (#22 review). */
+/** Complete missions at a full stop or at block-on (D8). Mutates g; returns
+ *  updated operator. Only settles missions armed by THIS aircraft — a
+ *  different aircraft merely landing at the same destination can't collect a
+ *  reward it didn't carry the mission for (#22 review).
+ *
+ *  Deliberately does NOT arm anything (R2, #33 review — arming used to happen
+ *  here too, at a running full stop and at block-on). "Much can happen between
+ *  block on and block off" for commitLeg's case, and a running stop offers the
+ *  player no chance to load before judging what's aboard — both are wrong in
+ *  principle, not merely ungated. Arming now happens ONLY via `armInto`, at
+ *  engine start (`armMissions`, called from the OFF_BLOCK effect). */
 function settleStop(
   g: GameState,
   operator: OperatorProfile | null,
   aircraftId: string,
   icao: string,
-  atT?: number
+  opts: StopOptions = {}
 ): { messages: string[]; operator: OperatorProfile | null } {
   const messages: string[] = []
   const done = g.acceptedMissions.filter(
@@ -421,9 +514,21 @@ function settleStop(
     // Fail OPEN: if the window can't be judged (no deadline stamped, or no stop
     // time supplied — a plumbing gap, not the player's fault), give the benefit
     // of the doubt rather than hard-fail a delivery that may well have been on time.
-    const canJudgeWindow = armed?.windowEndsAtT != null && atT != null
-    const madeWindow = !canJudgeWindow || (atT as number) <= (armed!.windowEndsAtT as number)
+    const canJudgeWindow = armed?.windowEndsAtT != null && opts.atT != null
+    const madeWindow = !canJudgeWindow || (opts.atT as number) <= (armed!.windowEndsAtT as number)
     const onTime = g.day <= mission.expiresDay
+
+    // Cargo (#33): what the aeroplane actually left with decides how much of
+    // the reward the delivery earned. Fails open — an unmeasured load (honour
+    // play, or a sim that reports nonsense) pays in full.
+    const ratio = payoutRatio(missionPayload(mission).totalKg, armed?.loadedKg ?? null)
+    const short = ratio < 1
+    const payable = Math.round(mission.reward * ratio)
+    // Floor, not round: "paid" must never overstate what actually landed —
+    // a shortfall just over PAYLOAD_TOLERANCE_KG on a heavy mission would
+    // otherwise round up to a self-contradicting "paid 100%". ratio === 1
+    // takes the no-note branch anyway, so 100 is unreachable here.
+    const paidPct = Math.floor(ratio * 100)
 
     // Settle: remove from accepted + armed regardless of outcome.
     g.acceptedMissions = g.acceptedMissions.filter((m) => m.id !== mission.id)
@@ -439,29 +544,31 @@ function settleStop(
       net = -mission.penalty
       messages.push(`⏱ Missed the window — ${mission.title}: cargo lost, penalty applied.`)
     } else {
-      post(g, 'MISSION', mission.title, mission.reward)
-      net = mission.reward
+      post(g, 'MISSION', short ? `${mission.title} (underload — paid ${paidPct}%)` : mission.title, payable)
+      net = payable
       // Per-leg duty accounting means the 50%-crossing tier can't be computed at
       // stop time; being over a limit when completing withholds everything (see
       // plan Global Constraints behavioral note).
       if (isOverAnyLimit(g.dutyLog, g.day)) {
-        post(g, 'PENALTY', 'Duty-time violation — 100% reward withheld', -mission.reward)
-        g.stats.totalEarned -= mission.reward
+        post(g, 'PENALTY', 'Duty-time violation — 100% reward withheld', -payable)
+        g.stats.totalEarned -= payable
         net = 0
       }
-      if (onTime) g.reputation = clamp(g.reputation + mission.reputationReward, 0, 100)
+      const repPenalty = short ? UNDERLOAD_REP_PENALTY : 0
+      if (onTime) g.reputation = clamp(g.reputation + mission.reputationReward - repPenalty, 0, 100)
       else {
         post(g, 'PENALTY', `Late completion — ${mission.title}`, -mission.penalty)
-        g.reputation = clamp(g.reputation - 2, 0, 100)
+        g.reputation = clamp(g.reputation - 2 - repPenalty, 0, 100)
         net -= mission.penalty
       }
       g.stats.missionsCompleted += 1
-      const xp = xpForMission(mission)
+      const xp = xpForMission(mission) // deliberately NOT scaled: the leg was flown
       if (operator) operator = { ...operator, xp: operator.xp + xp }
+      const shortNote = short ? ` (underload — paid ${paidPct}%)` : ''
       messages.push(
         onTime
-          ? `Mission complete: ${mission.title}. +$${mission.reward.toLocaleString()}, +${xp} XP.`
-          : `Completed late: ${mission.title} — penalty applied.`
+          ? `Mission complete: ${mission.title}. +$${payable.toLocaleString()}${shortNote}, +${xp} XP.`
+          : `Completed late: ${mission.title}${shortNote} — penalty applied.`
       )
     }
     if (g.openChain) {
@@ -469,7 +576,6 @@ function settleStop(
       g.openChain.missionIds.push(mission.id)
     }
   }
-  messages.push(...armInto(g, aircraftId, icao, atT))
   return { messages, operator }
 }
 
@@ -820,16 +926,16 @@ export const useGame = create<Store>()(
       // session effects; the reducer in game/simSession.ts stays pure. All
       // return { messages } for useSimSession to toast — never notify here.
 
-      armMissions: (aircraftId, icao, atT) => {
+      armMissions: (aircraftId, icao, opts) => {
         const s = get()
         if (!s.game) return { messages: [] }
         const g = structuredClone(s.game)
-        const messages = armInto(g, aircraftId, icao, atT)
+        const messages = armInto(g, aircraftId, icao, opts)
         set({ game: g })
         return { messages }
       },
 
-      stopAt: (aircraftId, icao, atT) => {
+      stopAt: (aircraftId, icao, opts) => {
         const s = get()
         if (!s.game) return { messages: [] }
         const g = structuredClone(s.game)
@@ -838,9 +944,26 @@ export const useGame = create<Store>()(
         // missed off-block hasn't. No sim identity is available here, so seed
         // an empty title — commitLeg's ensureOpenChain call backfills it later.
         ensureOpenChain(g, aircraftId, '', '')
-        const { messages, operator } = settleStop(g, s.operator, aircraftId, icao, atT)
+        const { messages, operator } = settleStop(g, s.operator, aircraftId, icao, opts)
         set({ game: g, operator })
         return { messages }
+      },
+
+      // Liftoff (#33): the load measured at engine start is provisional — the
+      // player may load or unload while taxiing, and an ordinary armed mission
+      // survives a disconnect or a day rollover (finalizeChainInto only un-arms
+      // time-critical ones), so its stamp can be a session old. What the
+      // aeroplane left the ground with is the figure that counts.
+      lockArmedLoad: (aircraftId, loadedKg) => {
+        const s = get()
+        if (!s.game || loadedKg == null) return
+        const mine = s.game.armedMissions.filter((r) => r.aircraftId === aircraftId)
+        if (mine.length === 0 || mine.every((r) => r.loadedKg === loadedKg)) return
+        const g = structuredClone(s.game)
+        for (const r of g.armedMissions) {
+          if (r.aircraftId === aircraftId) r.loadedKg = loadedKg
+        }
+        set({ game: g })
       },
 
       beginChain: (aircraftId, simTitle, simAtcModel) => {
@@ -866,9 +989,9 @@ export const useGame = create<Store>()(
         //    missionIds, not be dropped because no chain existed yet (D14 fix).
         ensureOpenChain(g, input.aircraftId, input.simTitle, input.simAtcModel)
 
-        // 1. Complete-then-arm at a catalogued field (idempotent with STOP_AT).
+        // 1. Complete at a catalogued field (idempotent with STOP_AT; no longer arms — R2, #33 review).
         if ('icao' in input.pos) {
-          const r = settleStop(g, operator, input.aircraftId, input.pos.icao, input.atT)
+          const r = settleStop(g, operator, input.aircraftId, input.pos.icao, { atT: input.atT })
           messages.push(...r.messages)
           operator = r.operator
         }

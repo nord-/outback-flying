@@ -86,7 +86,7 @@ function applyEffect(
       if (!state.aircraftId || !sample) break
       store.beginChain(state.aircraftId, sample.title, sample.atcModel)
       if (e.icao) {
-        const { messages } = store.armMissions(state.aircraftId, e.icao, sample.t)
+        const { messages } = store.armMissions(state.aircraftId, e.icao, { atT: sample.t, loadedKg: e.loadedKg })
         messages.forEach(notify)
       }
       // D13: the pre-flight duty warnings lived in the removed modals — warn at
@@ -102,9 +102,17 @@ function applyEffect(
       break
     }
     case 'STOP_AT': {
+      // A running full stop completes missions but no longer arms any (R2,
+      // #33 review) — arming only happens at engine start, via OFF_BLOCK — so
+      // the load this effect carries has nothing left to gate here.
       if (!state.aircraftId) break
-      const { messages } = store.stopAt(state.aircraftId, e.icao, sample.t)
+      const { messages } = store.stopAt(state.aircraftId, e.icao, { atT: sample.t })
       messages.forEach(notify)
+      break
+    }
+    case 'LOAD_LOCK': {
+      if (!state.aircraftId) break
+      store.lockArmedLoad(state.aircraftId, e.loadedKg)
       break
     }
     case 'ON_BLOCK': {

@@ -8,6 +8,7 @@ import { GALLONS_TO_LITRES } from '../game/flightlog'
 import { useSessionState } from '../sim/useSimSession'
 import { OperationsMap } from './OperationsMap'
 import { ActiveMissionWindow } from './ActiveMissionWindow'
+import { LoadPanel } from './LoadPanel'
 
 export function Dashboard() {
   const game = useGame((s) => s.game)!
@@ -29,6 +30,7 @@ export function Dashboard() {
       <div className="mb">
         <OperationsMap />
       </div>
+      <LoadPanel />
       {session.phase === 'SIM_ACTIVE' && sample && liveAc && (
         <div className="card mb">
           <div className="spread">

@@ -17,6 +17,7 @@ const mission = (over: Partial<Mission> = {}): Mission => ({
   postedDay: 1,
   expiresDay: 5,
   reputationReward: 2,
+  cargoKg: 40,
   ...over,
 })
 

@@ -4,12 +4,14 @@ import { getAirport, classifyFuel } from '../data/airports'
 import { getSpec } from '../data/aircraft'
 import { estimateProfit, URGENCY_MULT } from '../game/economy'
 import { missionTypeLabel, isTimeCritical } from '../game/missions'
+import { missionPayload } from '../game/payload'
 import { money, URGENCY_LABEL, FUEL_LABEL, fieldSummary } from '../game/format'
 import { bearingDeg, compass } from '../game/geo'
 import { estimateDutyMinutes, wouldBeOver, isOverAnyLimit } from '../game/duty'
 import type { Mission } from '../game/types'
 import { FlyModal } from './FlyModal'
 import { OperationsMap } from './OperationsMap'
+import { LoadPanel } from './LoadPanel'
 import { useNav } from './ui'
 import { useSim } from '../sim/useSim'
 
@@ -45,6 +47,7 @@ function MissionCard({
   const to = getAirport(m.toIcao)
   const dir = compass(bearingDeg(from, to))
   const dl = deadlineText(m, game.day)
+  const load = missionPayload(m)
 
   // Best-case profit estimate across the fleet (cheapest capable aircraft).
   const capable = game.fleet
@@ -93,6 +96,13 @@ function MissionCard({
       <div className="facts">
         <span><b>{m.distanceNm}</b> nm {dir}</span>
         <span>Seats <b>{m.seatsRequired}</b></span>
+        <span>
+          Load <b>{load.totalKg} kg</b>
+          <span className="muted">
+            {' '}
+            ({m.seatsRequired} PAX {load.paxKg} kg{load.cargoKg > 0 ? ` + ${load.cargoKg} kg freight` : ''})
+          </span>
+        </span>
         <span>Reward <b className="reward">{money(m.reward)}</b></span>
         <span>×{URGENCY_MULT[m.urgency]} urgency</span>
         {bestProfit !== null && (
@@ -212,6 +222,7 @@ export function Missions() {
       <div className="mb">
         <OperationsMap />
       </div>
+      <LoadPanel />
       <h2 className="page-title">Accepted — flight log ({accepted.length})</h2>
       {accepted.length === 0 ? (
         <div className="empty">No accepted missions. Take one from the board below.</div>
