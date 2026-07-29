@@ -33,10 +33,12 @@ function createWindow() {
   // size and lets Electron centre the window whenever the saved geometry is
   // missing or no longer fits the connected displays.
   const stateFile = windowStateFile(app.getPath('userData'))
-  const { bounds, isMaximized } = initialWindowState(
-    stateFile,
-    screen.getAllDisplays().map((d) => d.workArea)
-  )
+  const primary = screen.getPrimaryDisplay()
+  const workAreas = [
+    primary.workArea,
+    ...screen.getAllDisplays().filter((d) => d.id !== primary.id).map((d) => d.workArea),
+  ]
+  const { bounds, isMaximized } = initialWindowState(stateFile, workAreas)
   const win = new BrowserWindow({
     ...bounds,
     minWidth: MIN_SIZE.width,
