@@ -1,7 +1,8 @@
-import { app, BrowserWindow, Menu, ipcMain } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, screen } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { createSimBridge } from './simconnect.js'
+import { MIN_SIZE, initialWindowState, trackWindow, windowStateFile } from './windowState.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = process.env.ELECTRON_DEV === '1'
@@ -28,11 +29,20 @@ ipcMain.handle('sim:status', () => simBridge.getStatus())
 ipcMain.handle('sim:setFuel', (_event, litres) => simBridge.setFuel(litres))
 
 function createWindow() {
+  // Reopen where the player left off; windowState.js falls back to the default
+  // size and lets Electron centre the window whenever the saved geometry is
+  // missing or no longer fits the connected displays.
+  const stateFile = windowStateFile(app.getPath('userData'))
+  const primary = screen.getPrimaryDisplay()
+  const workAreas = [
+    primary.workArea,
+    ...screen.getAllDisplays().filter((d) => d.id !== primary.id).map((d) => d.workArea),
+  ]
+  const { bounds, isMaximized } = initialWindowState(stateFile, workAreas)
   const win = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 960,
-    minHeight: 640,
+    ...bounds,
+    minWidth: MIN_SIZE.width,
+    minHeight: MIN_SIZE.height,
     backgroundColor: '#0e1420',
     title: 'Outback Flying',
     webPreferences: {
@@ -41,6 +51,8 @@ function createWindow() {
       nodeIntegration: false,
     },
   })
+  if (isMaximized) win.maximize()
+  trackWindow(win, stateFile)
   mainWindow = win
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null

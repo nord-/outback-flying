@@ -110,7 +110,9 @@ export function App() {
           <div className="brand">
             <span className="logo">🛩️</span>
             <div>
-              <h1>Outback Flying</h1>
+              <h1>
+                Outback Flying <span className="version">v{__APP_VERSION__}</span>
+              </h1>
               <div className="company">{game.companyName} · {rank.title}</div>
             </div>
           </div>
