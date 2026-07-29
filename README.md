@@ -150,7 +150,8 @@ npm run electron:build # package a desktop app → release/
 ## Project layout
 
 ```
-electron/          Electron main + preload + SimConnect bridge (desktop shell)
+electron/          Electron main + preload + SimConnect bridge + window-state
+                    persistence (desktop shell)
 src/
   data/            Airport, aircraft and region catalogues (real-world inspired)
   game/            Pure game logic — types, geo, economy, missions, duty,

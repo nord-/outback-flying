@@ -55,6 +55,10 @@ All game rules and state live in `src/game/` as pure TypeScript with **no React 
 
 `electron/main.js` creates the `BrowserWindow`. In dev (`ELECTRON_DEV=1`) it loads `http://localhost:5173`; in production it loads `dist/index.html` (Vite is configured with `base: './'` so `file://` loading works). `contextIsolation: true` / `nodeIntegration: false` with a `preload.cjs` bridge (CommonJS on purpose — sandboxed preload scripts cannot use ESM, and the repo's `"type": "module"` would make a `.js` preload ESM).
 
+`electron/windowState.js` remembers the window's geometry between launches, in `window-state.json` under `app.getPath('userData')`. It deliberately does **not** import `electron` — `main.js` injects the user-data directory and `screen.getAllDisplays().map(d => d.workArea)`, so the geometry rules stay runnable in plain Node. `restoreBounds` is the pure core: it carries the saved size over (clamped to `MIN_SIZE` and to the display the window lands on) but keeps the saved position only when the window would still be reachable there — a rect on a monitor that has since been unplugged loses its `x`/`y` so Electron centres it instead. `trackWindow` persists debounced (400 ms) on `resize`/`move`/`maximize`/`unmaximize` and synchronously on `close`, reading `getNormalBounds()` so a window closed maximized still remembers a sane restore-down size. Every read and write is guarded — a corrupt or unwritable state file must never keep the app from starting.
+
+The app version shown in the header comes from `package.json` via the `__APP_VERSION__` define in `vite.config.ts` (mirrored in `vitest.config.ts`, declared in `src/vite-env.d.ts`). Build-time inlining, not `app.getVersion()`, so the web build shows it too and the release workflow's version bump is the single source of truth.
+
 ## CI, branching & releases
 
 `master` is the default branch and the production reference. Feature branches merge into it via PR.
