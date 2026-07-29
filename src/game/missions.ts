@@ -1,4 +1,5 @@
 import { airportsInRegionOfTypes, getAirport } from '../data/airports'
+import { AIRCRAFT_SPECS } from '../data/aircraft'
 import { distanceNm } from './geo'
 import {
   computeReward,
@@ -6,6 +7,7 @@ import {
   TIME_CRITICAL_MAX_DISTANCE_NM,
   TIME_CRITICAL_REWARD_MULT,
 } from './economy'
+import { PAX_KG } from './payload'
 import type { AircraftSpec, Airport, FieldType, Mission, MissionType, Urgency } from './types'
 
 let seq = 0
@@ -22,13 +24,23 @@ interface EndpointRule {
   destBias?: FieldType // tier favoured when picking the destination (70%)
 }
 
+/** Freight for one mission type. Rules are ordered least-specific first; the
+ *  last one whose `minSeats` the rolled seat count satisfies wins, so a type can
+ *  weigh differently by severity — a one-seat medevac is a sitting patient, a
+ *  two-seat one is a stretcher with a medical escort. */
+interface CargoRule {
+  kg: [number, number] // inclusive range
+  minSeats?: number
+}
+
 interface TypeConfig {
   type: MissionType
   label: string
   seats: [number, number] // inclusive range
+  cargo: readonly CargoRule[]
   weight: number
   endpoints: EndpointRule
-  narratives: readonly { text: string; tiers?: readonly FieldType[] }[]
+  narratives: readonly { text: string; tiers?: readonly FieldType[]; seats?: readonly number[] }[]
 }
 
 const TYPE_CONFIG: TypeConfig[] = [
@@ -36,20 +48,24 @@ const TYPE_CONFIG: TypeConfig[] = [
     type: 'MEDEVAC',
     label: 'Medical evacuation',
     seats: [1, 2],
+    cargo: [{ kg: [10, 20] }, { kg: [35, 50], minSeats: 2 }],
     weight: 3,
     endpoints: { from: ['regional', 'strip'], to: ['hub', 'regional'], originBias: 'strip' },
     narratives: [
-      { text: 'A serious workplace injury at a remote site needs urgent evacuation to hospital.' },
-      { text: 'A road accident on an isolated route has left a patient in a critical condition.' },
+      { text: 'A serious workplace injury at a remote site needs urgent evacuation to hospital.', seats: [2] },
+      { text: 'A road accident on an isolated route has left a patient in a critical condition.', seats: [2] },
       {
         text: 'A child in a remote community has suspected appendicitis and must reach a hospital.',
       },
+      { text: 'A station hand has broken an arm mustering and needs an X-ray in town.', seats: [1] },
+      { text: 'A worker with a deep laceration is stable, but must be seen at the base hospital today.', seats: [1] },
     ],
   },
   {
     type: 'DOCTOR_TRANSPORT',
     label: 'Doctor transport',
     seats: [1, 3],
+    cargo: [{ kg: [5, 25] }],
     weight: 2,
     endpoints: {
       from: ['hub', 'regional'],
@@ -76,6 +92,7 @@ const TYPE_CONFIG: TypeConfig[] = [
     type: 'PATIENT_TRANSFER',
     label: 'Patient transfer',
     seats: [1, 4],
+    cargo: [{ kg: [5, 25] }],
     weight: 2,
     endpoints: { from: ['hub', 'regional'], to: ['hub', 'regional'] },
     narratives: [
@@ -90,6 +107,7 @@ const TYPE_CONFIG: TypeConfig[] = [
     type: 'SUPPLY_RUN',
     label: 'Supply run',
     seats: [0, 2],
+    cargo: [{ kg: [60, 250] }],
     weight: 2,
     endpoints: {
       from: ['hub', 'regional'],
@@ -112,6 +130,7 @@ const TYPE_CONFIG: TypeConfig[] = [
     type: 'CLINIC_FLIGHT',
     label: 'Clinic flight',
     seats: [2, 5],
+    cargo: [{ kg: [20, 60] }],
     weight: 1,
     endpoints: {
       from: ['hub', 'regional'],
@@ -131,6 +150,7 @@ const TYPE_CONFIG: TypeConfig[] = [
     type: 'ORGAN_TRANSPORT',
     label: 'Organ transport',
     seats: [0, 1],
+    cargo: [{ kg: [10, 20] }],
     weight: 1,
     // Hospital to hospital: a regional hospital can transplant either way, so
     // both ends are hub | regional and neither end is biased.
@@ -150,6 +170,7 @@ const TYPE_CONFIG: TypeConfig[] = [
     type: 'EMERGENCY_MEDEVAC',
     label: 'Emergency medevac',
     seats: [4, 6],
+    cargo: [{ kg: [35, 50] }],
     weight: 1,
     // A medevac does not begin at a major hub — the hospital is already there.
     // Same shape as MEDEVAC: out in the region, in to a hospital.
@@ -380,6 +401,33 @@ function pickOrigin(
   return pick(pool)
 }
 
+/**
+ * Freight for a mission of this type at this seat count, capped by what the
+ * fleet can actually lift. Without the cap an operator flying light singles
+ * would be handed 420 kg supply runs that can only ever be flown underloaded —
+ * a board of traps rather than a board of jobs. The cap is real data, not a
+ * proxy: `usefulLoadKg` is MTOW minus empty weight, so the passengers and the
+ * freight come out of the same budget, exactly as they do in an aeroplane.
+ *
+ * Deliberately fuel-blind. Reserving weight for fuel would mean inventing a
+ * tank state, and a heavy load is perfectly flyable if you fuel for the leg
+ * instead of filling the tanks — that trade-off belongs to the player in the
+ * simulator, not to mission generation.
+ *
+ * The cap never falls below the rule's own minimum: a supply run with no
+ * supplies is not a supply run, and this bounds mission *design*, not
+ * airworthiness. Nothing is ever blocked (see the spec).
+ */
+function rollCargoKg(cfg: TypeConfig, seats: number, fleetSpecs: AircraftSpec[]): number {
+  const rule = [...cfg.cargo].reverse().find((r) => seats >= (r.minSeats ?? 0)) ?? cfg.cargo[0]
+  const bestLoadKg =
+    fleetSpecs.length > 0
+      ? Math.max(...fleetSpecs.map((s) => s.usefulLoadKg))
+      : Math.max(...AIRCRAFT_SPECS.map((s) => s.usefulLoadKg))
+  const cap = Math.max(rule.kg[0], bestLoadKg - PAX_KG - seats * PAX_KG)
+  return randInt(rule.kg[0], Math.min(rule.kg[1], cap))
+}
+
 /** Generate a single mission valid on the given day, scaled by reputation and current fleet. */
 export function generateMission(
   day: number,
@@ -403,6 +451,7 @@ export function generateMission(
   const hi = Math.min(cfg.seats[1], maxSeats)
   const lo = Math.min(cfg.seats[0], hi)
   const seats = randInt(lo, hi)
+  const cargoKg = rollCargoKg(cfg, seats, fleetSpecs)
   const urgency = rollUrgency(cfg.type)
   const [dMin, dMax] = DEADLINE_DAYS[urgency]
   const reward = computeReward(dist, seats, urgency, reputation, timeCritical ? TIME_CRITICAL_REWARD_MULT : 1)
@@ -410,9 +459,12 @@ export function generateMission(
   const repReward =
     urgency === 'EMERGENCY' ? randInt(3, 5) : urgency === 'PRIORITY' ? randInt(2, 3) : randInt(1, 2)
 
-  // The narrative is chosen after the destination, so its wording matches the
-  // tier actually flown to; an empty filter falls back to the whole list.
-  const fitting = cfg.narratives.filter((n) => !n.tiers || n.tiers.includes(to.type))
+  // The narrative is chosen after the destination AND the seat roll, so its
+  // wording matches both the tier flown to and what is actually being carried;
+  // an empty filter falls back to the whole list.
+  const fitting = cfg.narratives.filter(
+    (n) => (!n.tiers || n.tiers.includes(to.type)) && (!n.seats || n.seats.includes(seats))
+  )
   const narrative = pick(fitting.length > 0 ? [...fitting] : [...cfg.narratives])
 
   return {
@@ -424,6 +476,7 @@ export function generateMission(
     toIcao: to.icao,
     distanceNm: Math.round(dist),
     seatsRequired: seats,
+    cargoKg,
     urgency,
     reward,
     penalty: Math.round(reward * 0.25),

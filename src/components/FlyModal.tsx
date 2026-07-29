@@ -12,6 +12,7 @@ import {
   suggestedFuelLitres,
 } from '../game/economy'
 import { fieldSuitability, requiredRunwayM, MARGIN_OK } from '../game/fields'
+import { missionPayload } from '../game/payload'
 import { money, signedMoney, fieldSummary, FUEL_LABEL } from '../game/format'
 import type { Mission } from '../game/types'
 
@@ -124,6 +125,9 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
             <span><b>{from.icao}</b> {from.name} → <b>{to.icao}</b> {to.name}</span>
             <span><b>{mission.distanceNm}</b> nm</span>
             <span>Seats needed <b>{mission.seatsRequired}</b></span>
+            <span>
+              Load to carry <b>{missionPayload(mission).totalKg} kg</b>
+            </span>
             <span>Reward <b className="reward">{money(mission.reward)}</b></span>
             <span>{to.icao} <b>{fieldSummary(to)}</b></span>
           </div>

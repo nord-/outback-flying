@@ -31,6 +31,7 @@ const slowPistonSpec: AircraftSpec = {
   purchaseCost: 220000,
   maintPerHour: 45,
   dailyFixedCost: 60,
+  usefulLoadKg: 390, // matches the real c172 entry in src/data/aircraft.ts
 }
 
 function averageDistance(fleetSpecs: AircraftSpec[]): number {
@@ -307,5 +308,69 @@ describe('generateMissions origin proximity (#30)', () => {
     // and at half the observed minimum; if it ever flakes, lower the floor —
     // a failure here does NOT mean the fallback is wrong.
     expect(new Set(missions.map((m) => m.fromIcao)).size).toBeGreaterThanOrEqual(6)
+  })
+})
+
+describe('cargo weight (#33)', () => {
+  // `twoSeatSpec` (missions.test.ts:69) is the existing light-fleet fixture —
+  // reuse it rather than defining another, and give both fixtures the useful
+  // load the cap now reads.
+  const lightSpec: AircraftSpec = { ...twoSeatSpec, usefulLoadKg: 245 } // C152-like
+  const capableSpec: AircraftSpec = { ...slowPistonSpec, id: 'pc6', name: 'Pilatus PC-6', seats: 6, usefulLoadKg: 1000 }
+
+  it('gives every generated mission a finite, non-negative freight figure', () => {
+    for (const m of generateMissions(SAMPLE_SIZE, 1, 50, [], 'outback', PILOT)) {
+      expect(Number.isFinite(m.cargoKg)).toBe(true)
+      expect(m.cargoKg).toBeGreaterThanOrEqual(0)
+    }
+  })
+
+  it('always gives a supply run real freight — its seat count alone can be zero', () => {
+    const supplyRuns = generateMissions(SAMPLE_SIZE * 4, 1, 50, [], 'outback', PILOT).filter(
+      (m) => m.type === 'SUPPLY_RUN'
+    )
+    expect(supplyRuns.length).toBeGreaterThan(0)
+    for (const m of supplyRuns) expect(m.cargoKg).toBeGreaterThanOrEqual(60)
+  })
+
+  it('loads a one-seat medevac light and a two-seat medevac with a stretcher', () => {
+    const medevacs = generateMissions(SAMPLE_SIZE * 4, 1, 50, [], 'outback', PILOT).filter(
+      (m) => m.type === 'MEDEVAC'
+    )
+    const single = medevacs.filter((m) => m.seatsRequired === 1)
+    const double = medevacs.filter((m) => m.seatsRequired === 2)
+    expect(single.length).toBeGreaterThan(0)
+    expect(double.length).toBeGreaterThan(0)
+    for (const m of single) expect(m.cargoKg).toBeLessThanOrEqual(20)
+    for (const m of double) expect(m.cargoKg).toBeGreaterThanOrEqual(35)
+  })
+
+  // PAX and freight come out of one weight budget, so what the passengers don't
+  // use is what the freight may weigh — bounded below by the type's own minimum.
+  it('caps freight by what the fleet can lift, never below the type minimum', () => {
+    for (const m of generateMissions(SAMPLE_SIZE * 2, 1, 50, [lightSpec], 'outback', PILOT)) {
+      const headroomKg = 245 - 85 - m.seatsRequired * 85
+      expect(m.cargoKg).toBeLessThanOrEqual(Math.max(60, headroomKg)) // 60 = SUPPLY_RUN's floor, the heaviest a light fleet can draw
+    }
+  })
+
+  // The mirror of the test above: the cap must bite only where it should, or a
+  // capable operator quietly loses heavy freight altogether.
+  it('still hands a capable fleet heavy freight', () => {
+    const heaviest = generateMissions(SAMPLE_SIZE * 4, 1, 50, [capableSpec], 'outback', PILOT).reduce(
+      (max, m) => Math.max(max, m.cargoKg),
+      0
+    )
+    expect(heaviest).toBeGreaterThan(170)
+  })
+
+  it('matches the narrative to the seat count for a medevac', () => {
+    const stretcher = 'A road accident on an isolated route has left a patient in a critical condition.'
+    const medevacs = generateMissions(SAMPLE_SIZE * 4, 1, 50, [], 'outback', PILOT).filter(
+      (m) => m.type === 'MEDEVAC'
+    )
+    for (const m of medevacs.filter((x) => x.seatsRequired === 1)) {
+      expect(m.description).not.toBe(stretcher)
+    }
   })
 })

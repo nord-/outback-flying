@@ -78,6 +78,14 @@ const VARS = [
   { name: 'GENERAL ENG COMBUSTION:2', unit: 'bool', type: SimConnectDataType.INT32 },
   { name: 'GENERAL ENG COMBUSTION:3', unit: 'bool', type: SimConnectDataType.INT32 },
   { name: 'GENERAL ENG COMBUSTION:4', unit: 'bool', type: SimConnectDataType.INT32 },
+  // Payload weights (#33 realistic cargo). Kilograms, so the game layer needs no
+  // conversion. Appended LAST — order here MUST match the read order in
+  // readSample(). PAYLOAD STATION WEIGHT:1 is the pilot seat by sim convention;
+  // an aircraft with no such station reads 0, which is the correct neutral.
+  { name: 'TOTAL WEIGHT', unit: 'kilograms', type: SimConnectDataType.FLOAT64 },
+  { name: 'EMPTY WEIGHT', unit: 'kilograms', type: SimConnectDataType.FLOAT64 },
+  { name: 'FUEL TOTAL QUANTITY WEIGHT', unit: 'kilograms', type: SimConnectDataType.FLOAT64 },
+  { name: 'PAYLOAD STATION WEIGHT:1', unit: 'kilograms', type: SimConnectDataType.FLOAT64 },
 ]
 
 /** Read one sample from a RawBuffer in the same order VARS were defined. */
@@ -98,7 +106,13 @@ function readSample(buffer) {
   const eng2 = buffer.readInt32() !== 0
   const eng3 = buffer.readInt32() !== 0
   const eng4 = buffer.readInt32() !== 0
-  return { ...base, enginesOn: eng1 || eng2 || eng3 || eng4 }
+  const weights = {
+    totalKg: buffer.readFloat64(),
+    emptyKg: buffer.readFloat64(),
+    fuelKg: buffer.readFloat64(),
+    pilotStationKg: buffer.readFloat64(),
+  }
+  return { ...base, ...weights, enginesOn: eng1 || eng2 || eng3 || eng4 }
 }
 
 /** Map a friendly protocol name to a node-simconnect Protocol value. */
