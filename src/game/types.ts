@@ -2,7 +2,7 @@ export type FuelType = 'AVGAS' | 'JETA'
 
 export type FieldType = 'hub' | 'regional' | 'strip'
 
-export type Surface = 'sealed' | 'gravel' | 'dirt' | 'grass' | 'sand'
+export type Surface = 'sealed' | 'gravel' | 'dirt' | 'grass' | 'sand' | 'unknown'
 
 export interface Airport {
   icao: string
@@ -12,7 +12,9 @@ export interface Airport {
   lat: number
   lon: number
   type: FieldType // game role: where missions originate, where the market is
-  runwayM: number // longest non-closed runway, rounded to 10 m
+  // Longest non-closed runway, rounded to 10 m. null when no verified length
+  // exists (surface is then 'unknown') — the field may be unlandable.
+  runwayM: number | null
   surface: Surface // surface of that longest runway
   lighted: boolean // runway lighting — shown as information, no mechanic
   fuelTypes: FuelType[] // which fuel types the field offers; [] = no fuel

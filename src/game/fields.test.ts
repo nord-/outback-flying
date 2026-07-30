@@ -10,7 +10,7 @@ import { getSpec } from '../data/aircraft'
 import type { Airport, Surface } from './types'
 
 /** A field with only the properties the rules are allowed to read (B6). */
-const field = (runwayM: number, surface: Surface): Airport => ({
+const field = (runwayM: number | null, surface: Surface): Airport => ({
   icao: 'TEST',
   name: 'Test Field',
   state: 'NT',
@@ -43,6 +43,10 @@ describe('runwayMargin', () => {
   it('is runway length over the surface-adjusted requirement', () => {
     expect(runwayMargin(field(915, 'dirt'), getSpec('b200'))).toBeCloseTo(1.061, 3)
   })
+
+  it('is NaN when the runway length is unverified', () => {
+    expect(runwayMargin(field(null, 'unknown'), getSpec('b200'))).toBeNaN()
+  })
 })
 
 describe('fieldSuitability', () => {
@@ -65,6 +69,10 @@ describe('fieldSuitability', () => {
   it('is ok just above the upper bound', () => {
     // 862.5 * 1.15 ≈ 991.9, so 992 m clears it
     expect(fieldSuitability(field(992, 'dirt'), getSpec('b200'))).toBe('ok')
+  })
+
+  it('is unknown when the runway length is unverified', () => {
+    expect(fieldSuitability(field(null, 'unknown'), getSpec('b200'))).toBe('unknown')
   })
 })
 
@@ -110,5 +118,9 @@ describe('landingWear', () => {
   it('collapses to just the surface baseline at the upper boundary, margin exactly 1.15', () => {
     // 287.5 * 1.15 = 330.625, an exact double (verified: 330.625 / 287.5 === 1.15).
     expect(landingWear(field(330.625, 'dirt'), getSpec('pc6'))).toBe(0.15)
+  })
+
+  it('charges the worst-case penalty when the runway length is unverified', () => {
+    expect(landingWear(field(null, 'unknown'), getSpec('b200'))).toBe(4.25)
   })
 })

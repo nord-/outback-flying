@@ -165,6 +165,9 @@ The game state and rules live in `src/game/` and are UI-agnostic — the React
 components only render state and dispatch actions through the Zustand store
 (`src/game/store.ts`).
 
+See [docs/airports](docs/airports/README.md) for a full per-region airfield
+reference (tables + maps), generated from `src/data/airports.ts`.
+
 ## Roadmap ideas
 
 ### Shipped

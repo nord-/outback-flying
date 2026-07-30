@@ -1,4 +1,4 @@
-import type { Airport, FuelType, Urgency } from './types'
+import type { Airport, FuelType, Surface, Urgency } from './types'
 
 /** Display labels for fuel types. The stored enum value stays `JETA`; only the UI reads `JET A1`. */
 export const FUEL_LABEL: Record<FuelType, string> = {
@@ -27,6 +27,16 @@ export const URGENCY_LABEL: Record<Urgency, string> = {
   EMERGENCY: 'Emergency',
 }
 
+/** Display labels for runway surface. `unknown` covers both an unverified surface with a known length, and no data at all. */
+export const SURFACE_LABEL: Record<Surface, string> = {
+  sealed: 'sealed',
+  gravel: 'gravel',
+  dirt: 'dirt',
+  grass: 'grass',
+  sand: 'sand',
+  unknown: 'unverified surface',
+}
+
 /**
  * "1240 m gravel" — the field's physical facts, for any decision UI.
  * Deliberately omits lighting: OurAirports reports no lighting for all four
@@ -35,5 +45,6 @@ export const URGENCY_LABEL: Record<Urgency, string> = {
  * when a better source exists, it just isn't displayed here for now.
  */
 export function fieldSummary(a: Airport): string {
-  return `${a.runwayM} m ${a.surface}`
+  if (a.runwayM == null) return 'unverified field data'
+  return `${a.runwayM} m, ${SURFACE_LABEL[a.surface]}`
 }

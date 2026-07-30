@@ -13,7 +13,7 @@ import {
 } from '../game/economy'
 import { fieldSuitability, requiredRunwayM, MARGIN_OK } from '../game/fields'
 import { missionPayload } from '../game/payload'
-import { money, signedMoney, fieldSummary, FUEL_LABEL } from '../game/format'
+import { money, signedMoney, fieldSummary, SURFACE_LABEL, FUEL_LABEL } from '../game/format'
 import type { Mission } from '../game/types'
 
 export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () => void }) {
@@ -194,15 +194,21 @@ export function FlyModal({ mission, onClose }: { mission: Mission; onClose: () =
                   <div
                     className="tiny"
                     style={{
-                      color: suitability === 'short' ? 'var(--red)' : 'var(--amber)',
+                      color: suitability === 'short' || suitability === 'unknown' ? 'var(--red)' : 'var(--amber)',
                       marginTop: 6,
                     }}
                   >
-                    ⚠ {to.icao} has {to.runwayM} m of {to.surface}; {selected.spec.name} wants{' '}
-                    {wantsM} m.{' '}
-                    {suitability === 'short'
-                      ? 'Too short — expect heavy wear on landing.'
-                      : 'Marginal — expect some extra wear.'}
+                    {suitability === 'unknown' ? (
+                      <>⚠ {to.icao}'s runway data is unverified — it may be unlandable. Plan an alternate.</>
+                    ) : (
+                      <>
+                        ⚠ {to.icao} has {to.runwayM} m of {SURFACE_LABEL[to.surface]}; {selected.spec.name} wants{' '}
+                        {wantsM} m.{' '}
+                        {suitability === 'short'
+                          ? 'Too short — expect heavy wear on landing.'
+                          : 'Marginal — expect some extra wear.'}
+                      </>
+                    )}
                   </div>
                 )}
               </div>
