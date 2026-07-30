@@ -49,6 +49,25 @@ const OUTBACK: Omit<Airport, 'region'>[] = [
   { icao: 'YCOM', name: 'Cooma', state: 'NSW', lat: -36.301, lon: 148.973, type: 'regional', runwayM: 2120, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
   { icao: 'YLEC', name: 'Leigh Creek', state: 'SA', lat: -30.598, lon: 138.426, type: 'regional', runwayM: 1710, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
   { icao: 'YHUG', name: 'Hughenden', state: 'QLD', lat: -20.815, lon: 144.225, type: 'regional', runwayM: 1640, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  // Wimmera/Mallee region, VIC — matched against installed MSFS scenery
+  // addons (Mid Western Victoria pack). Real OurAirports data throughout;
+  // YSLK and YWYF carry an unmapped surface code ('G'/'C') so surface is
+  // 'unknown' rather than guessed.
+  { icao: 'YARA', name: 'Ararat Airport', state: 'VIC', lat: -37.309978, lon: 142.988688, type: 'regional', runwayM: 1240, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YBIR', name: 'Birchip Airport', state: 'VIC', lat: -35.999699, lon: 142.917007, type: 'regional', runwayM: 1040, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YDOD', name: 'Donald Airport', state: 'VIC', lat: -36.360298, lon: 143.007996, type: 'regional', runwayM: 1170, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YHPN', name: 'Hopetoun Airport', state: 'VIC', lat: -35.715302, lon: 142.360001, type: 'regional', runwayM: 1140, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YHSM', name: 'Horsham Airport', state: 'VIC', lat: -36.669701, lon: 142.173004, type: 'regional', runwayM: 1320, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YKER', name: 'Kerang Airport', state: 'VIC', lat: -35.7514, lon: 143.938995, type: 'regional', runwayM: 1070, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YMBU', name: 'Maryborough Airport', state: 'VIC', lat: -37.0331, lon: 143.709, type: 'regional', runwayM: 1040, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YPOD', name: 'Portland Airport', state: 'VIC', lat: -38.3181, lon: 141.470993, type: 'regional', runwayM: 1620, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YSLK', name: 'Sea Lake Airport', state: 'VIC', lat: -35.530594, lon: 142.889879, type: 'regional', runwayM: 1040, surface: 'unknown', lighted: false, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YSTA', name: 'Saint Arnaud Airport', state: 'VIC', lat: -36.6367, lon: 143.186005, type: 'regional', runwayM: 1000, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YSWH', name: 'Swan Hill Airport', state: 'VIC', lat: -35.375801, lon: 143.533005, type: 'regional', runwayM: 1500, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YSWL', name: 'Stawell Airport', state: 'VIC', lat: -37.071701, lon: 142.740997, type: 'regional', runwayM: 1400, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YWBL', name: 'Warrnambool Airport', state: 'VIC', lat: -38.2953, lon: 142.447006, type: 'regional', runwayM: 1370, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YWKB', name: 'Warracknabeal Airport', state: 'VIC', lat: -36.321098, lon: 142.419006, type: 'regional', runwayM: 1370, surface: 'sealed', lighted: true, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
+  { icao: 'YWYF', name: 'Wycheproof Airport', state: 'VIC', lat: -36.0583, lon: 143.242996, type: 'regional', runwayM: 1030, surface: 'unknown', lighted: false, fuelTypes: ['AVGAS', 'JETA'], fuelPriceMult: 1.1 },
   // Bush strips — unsealed station, community and homestead fields, nearly
   // all without fuel. Physical data from OurAirports, snapshot 2026-07-27.
   { icao: 'YABF', name: 'Aberfoyle Airport', state: 'QLD', lat: -21.671, lon: 145.266, type: 'strip', runwayM: 660, surface: 'dirt', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
@@ -69,6 +88,113 @@ const OUTBACK: Omit<Airport, 'region'>[] = [
   { icao: 'YPGH', name: 'Pigeon Hole Airport', state: 'NT', lat: -16.82, lon: 131.206, type: 'strip', runwayM: 1040, surface: 'dirt', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
   { icao: 'YUSL', name: 'Useless Loop Airport', state: 'WA', lat: -26.158, lon: 113.395, type: 'strip', runwayM: 1000, surface: 'dirt', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
   { icao: 'YWGM', name: 'White Gum Air Park', state: 'WA', lat: -31.864, lon: 116.936, type: 'strip', runwayM: 1160, surface: 'dirt', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  // Northern Territory bush strips, matched against an installed MSFS scenery
+  // addon pack (sltcreations "Northern Territory") whose own documentation
+  // (not OurAirports — most of these predate or postdate its coverage, or
+  // carry unmapped/inconsistent surface codes there) gives real placed
+  // coordinates and runway lengths — coordinates and lengths are facts, not
+  // the pack's expression, so no separate licence applies. Surface stays
+  // 'unknown' unless that documentation states a material outright
+  // (sand/dirt/gravel); every entry below has a documented length. A close
+  // cluster of duplicate/nearby entries was thinned to satisfy the 12 nm
+  // separation rule below, preferring — in order — a verified surface, a
+  // longer runway, a better surface material, lighting, a non-private field,
+  // then a non-WW2 field.
+  { icao: 'YALR', name: 'Aileron Roadhouse', state: 'NT', lat: -22.653, lon: 133.347, type: 'strip', runwayM: 1288, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YANL', name: 'Anthony Lagoon Homestead', state: 'NT', lat: -17.976, lon: 135.539, type: 'strip', runwayM: 1102, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YARP', name: 'Arapunya', state: 'NT', lat: -22.285, lon: 135.726, type: 'strip', runwayM: 620, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YBES', name: 'Beswick', state: 'NT', lat: -14.591, lon: 133.111, type: 'strip', runwayM: 1145, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YBIG', name: 'Bing Bong', state: 'NT', lat: -15.62, lon: 136.353, type: 'strip', runwayM: 250, surface: 'sand', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YBIT', name: 'Bullita', state: 'NT', lat: -16.119, lon: 130.429, type: 'strip', runwayM: 960, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YCCR', name: 'Coomalie Creek WW2', state: 'NT', lat: -13.012, lon: 131.13, type: 'strip', runwayM: 1659, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YCNP', name: 'Channel Point', state: 'NT', lat: -13.155, lon: 130.144, type: 'strip', runwayM: 1355, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YCNS', name: 'Coniston Station', state: 'NT', lat: -22.05, lon: 132.494, type: 'strip', runwayM: 1327, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YDLD', name: 'Delmore Downs Homestead', state: 'NT', lat: -22.455, lon: 134.825, type: 'strip', runwayM: 1274, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YDPR', name: 'Dneiper', state: 'NT', lat: -22.627, lon: 135.232, type: 'strip', runwayM: 1700, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YDRY', name: 'Drysdale Island', state: 'NT', lat: -11.645, lon: 136.028, type: 'strip', runwayM: 715, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YDSV', name: 'Dorisvale', state: 'NT', lat: -14.501, lon: 131.347, type: 'strip', runwayM: 1290, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YELZ', name: 'Elizabeth Downs', state: 'NT', lat: -13.744, lon: 130.505, type: 'strip', runwayM: 1300, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YFSR', name: 'Fisher', state: 'NT', lat: -13.556, lon: 132.626, type: 'strip', runwayM: 1022, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YGOR', name: 'Gorrie WW2', state: 'NT', lat: -15.486, lon: 133.179, type: 'strip', runwayM: 1908, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YGTC', name: 'Gemtree Roadhouse', state: 'NT', lat: -22.971, lon: 134.247, type: 'strip', runwayM: 1350, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YHBP', name: 'Homebush Park', state: 'NT', lat: -14.662, lon: 132.645, type: 'strip', runwayM: 1788, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YHOV', name: 'Hodgson River Homestead', state: 'NT', lat: -15.571, lon: 134.096, type: 'strip', runwayM: 836, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YHSB', name: 'Horseshoe Bend', state: 'NT', lat: -25.256, lon: 134.28, type: 'strip', runwayM: 1573, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YKAB', name: 'King Ash Bay', state: 'NT', lat: -15.929, lon: 136.487, type: 'strip', runwayM: 977, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YKOH', name: 'Koolpinyah', state: 'NT', lat: -12.392, lon: 131.226, type: 'strip', runwayM: 1445, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YLAE', name: 'Labelle Downs', state: 'NT', lat: -13.113, lon: 130.499, type: 'strip', runwayM: 1120, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YLIT', name: 'Litchfield Station', state: 'NT', lat: -13.434, lon: 130.501, type: 'strip', runwayM: 1211, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YMEE', name: 'Merlin Diamond Mine', state: 'NT', lat: -16.818, lon: 136.329, type: 'strip', runwayM: 2438, surface: 'dirt', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YMJI', name: 'Murranji Station', state: 'NT', lat: -17.005, lon: 133.133, type: 'strip', runwayM: 1109, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YMKC', name: 'Mistake Creek', state: 'NT', lat: -17.092, lon: 129.046, type: 'strip', runwayM: 815, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YNCW', name: 'Newcastle Waters', state: 'NT', lat: -17.335, lon: 133.44, type: 'strip', runwayM: 2120, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YWNR', name: 'Woolner', state: 'NT', lat: -12.364, lon: 131.467, type: 'strip', runwayM: 848, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YWOU', name: 'Wombungi', state: 'NT', lat: -14.776, lon: 131.047, type: 'strip', runwayM: 770, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX01', name: 'Dundee Beach', state: 'NT', lat: -12.72, lon: 130.361, type: 'strip', runwayM: 1382, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX05', name: 'Mary River Station', state: 'NT', lat: -13.49, lon: 132.014, type: 'strip', runwayM: 878, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX07', name: 'Cape Wessel', state: 'NT', lat: -11.004, lon: 136.76, type: 'strip', runwayM: 460, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX08', name: 'Marrakai Road', state: 'NT', lat: -12.835, lon: 131.331, type: 'strip', runwayM: 1114, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX12', name: 'Colson Track', state: 'NT', lat: -25.474, lon: 136.61, type: 'strip', runwayM: 1644, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX13', name: 'Jinka Homestead', state: 'NT', lat: -22.935, lon: 135.733, type: 'strip', runwayM: 1515, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX14', name: 'Redgum Store', state: 'NT', lat: -22.258, lon: 134.967, type: 'strip', runwayM: 1024, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX16', name: 'Ilpurla', state: 'NT', lat: -24.313, lon: 132.71, type: 'strip', runwayM: 882, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX17', name: 'Mount Zeil Wilderness Park', state: 'NT', lat: -23.326, lon: 132.39, type: 'strip', runwayM: 1116, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX18', name: 'Milton Park Homestead', state: 'NT', lat: -23.358, lon: 133.003, type: 'strip', runwayM: 1310, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX19', name: 'Hamilton Downs', state: 'NT', lat: -23.507, lon: 133.261, type: 'strip', runwayM: 1256, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX21', name: 'Dunmarra Roadhouse', state: 'NT', lat: -16.672, lon: 133.41, type: 'strip', runwayM: 1200, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX22', name: 'Indiana Station', state: 'NT', lat: -23.312, lon: 135.451, type: 'strip', runwayM: 1098, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX23', name: 'Beetaloo Station', state: 'NT', lat: -17.225, lon: 133.791, type: 'strip', runwayM: 1198, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX26', name: 'Spirit Hills Station', state: 'NT', lat: -15.434, lon: 129.01, type: 'strip', runwayM: 988, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX27', name: 'Yambah Station', state: 'NT', lat: -23.131, lon: 133.824, type: 'strip', runwayM: 1570, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX28', name: 'Melaleuca Station', state: 'NT', lat: -12.489, lon: 131.834, type: 'strip', runwayM: 2000, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX29', name: 'Fish River Homestead', state: 'NT', lat: -14.188, lon: 130.881, type: 'strip', runwayM: 1028, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX30', name: 'Finnis River Homestead', state: 'NT', lat: -12.872, lon: 130.545, type: 'strip', runwayM: 881, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX33', name: 'Atula Homestead', state: 'NT', lat: -23.255, lon: 136.389, type: 'strip', runwayM: 1160, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX34', name: 'Phillip Creek', state: 'NT', lat: -19.273, lon: 134.129, type: 'strip', runwayM: 865, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX35', name: 'Dry River Station', state: 'NT', lat: -15.239, lon: 132.147, type: 'strip', runwayM: 1084, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX36', name: 'Deleye', state: 'NT', lat: -13.771, lon: 129.983, type: 'strip', runwayM: 1130, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX37', name: 'Scott Creek Station', state: 'NT', lat: -14.871, lon: 131.854, type: 'strip', runwayM: 1770, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX38', name: 'Fenton WW2', state: 'NT', lat: -13.621, lon: 131.339, type: 'strip', runwayM: 2090, surface: 'gravel', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX41', name: 'Munmarlary Homestead', state: 'NT', lat: -12.467, lon: 132.554, type: 'strip', runwayM: 1034, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX42', name: 'Nourlangie Homestead', state: 'NT', lat: -12.767, lon: 132.65, type: 'strip', runwayM: 1342, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX44', name: 'Burrumburru', state: 'NT', lat: -17.761, lon: 137.802, type: 'strip', runwayM: 1250, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX45', name: 'Redbank Wollogorang', state: 'NT', lat: -17.469, lon: 137.922, type: 'strip', runwayM: 1200, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX48', name: 'Rombola Family Farms', state: 'NT', lat: -14.986, lon: 133.085, type: 'strip', runwayM: 1140, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX49', name: 'Mount Bundy Station', state: 'NT', lat: -13.232, lon: 131.138, type: 'strip', runwayM: 1030, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX52', name: 'Timber Creek Racetrack', state: 'NT', lat: -15.733, lon: 130.5, type: 'strip', runwayM: 1011, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX53', name: 'Cockatoo Lagoon', state: 'NT', lat: -15.957, lon: 129.044, type: 'strip', runwayM: 911, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX55', name: 'Kalala Homestead', state: 'NT', lat: -16.194, lon: 133.33, type: 'strip', runwayM: 957, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX56', name: 'Western Creek', state: 'NT', lat: -15.92, lon: 132.388, type: 'strip', runwayM: 1500, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX57', name: 'Old Delamere', state: 'NT', lat: -15.729, lon: 131.534, type: 'strip', runwayM: 1345, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX58', name: 'Broadmere', state: 'NT', lat: -16.451, lon: 135.204, type: 'strip', runwayM: 1124, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX60', name: 'Macdonald WW2', state: 'NT', lat: -13.752, lon: 131.72, type: 'strip', runwayM: 1562, surface: 'gravel', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YX62', name: 'Strauss WW2', state: 'NT', lat: -12.656, lon: 131.077, type: 'strip', runwayM: 1586, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  // Far North Queensland bush strips, matched against an installed MSFS
+  // scenery addon pack (sltcreations "Queensland Airfields") whose own PDF
+  // documentation gives placed coordinates — coordinates and lengths are
+  // facts, not the pack's expression, so no separate licence applies. Only
+  // two entries state a runway length in that text (YQ02, YQ03) and only one
+  // states a surface (YQ02, dirt). YCYT/YLRS carry an OurAirports length but
+  // an unmapped surface code. Everything else is length-unknown,
+  // surface-unknown. YRLH (Riversleigh) is grouped here for its scenery-pack
+  // source though it sits further west, in Gulf/Lawn Hill country.
+  { icao: 'YBWL', name: 'Bramwell Station', state: 'QLD', lat: -12.1397, lon: 142.6143, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YCDW', name: 'Dallachy/Cardwell', state: 'QLD', lat: -18.1791, lon: 145.9504, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YCYT', name: 'Crystalbrook Station', state: 'QLD', lat: -17.3804, lon: 144.4503, type: 'strip', runwayM: 1100, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YLRS', name: 'New Laura', state: 'QLD', lat: -15.1828, lon: 144.3456, type: 'strip', runwayM: 1000, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YQ01', name: 'Cannibal Creek', state: 'QLD', lat: -16.2022, lon: 144.4637, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YQ02', name: 'Wonga Beach', state: 'QLD', lat: -16.3212, lon: 145.4219, type: 'strip', runwayM: 1100, surface: 'dirt', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YQ03', name: 'Bustard Downs', state: 'QLD', lat: -16.5739, lon: 145.1822, type: 'strip', runwayM: 550, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YQ04', name: 'Mount Dickson', state: 'QLD', lat: -15.4689, lon: 145.0582, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YQ05', name: 'Mount Mulligan', state: 'QLD', lat: -16.88, lon: 144.8969, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YQ06', name: 'Cabana Station', state: 'QLD', lat: -18.0284, lon: 144.0479, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YQ07', name: 'Knox Creek', state: 'QLD', lat: -14.0522, lon: 141.6819, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YQ08', name: 'Koah Private', state: 'QLD', lat: -16.8267, lon: 145.521, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YQ09', name: 'Port Stuart', state: 'QLD', lat: -14.0785, lon: 143.6329, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YQ10', name: 'Hurricane Station', state: 'QLD', lat: -16.5802, lon: 144.6555, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YQ11', name: 'Bathurst Head Outstation', state: 'QLD', lat: -14.4705, lon: 144.2474, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YRLH', name: 'Riversleigh', state: 'QLD', lat: -19.0288, lon: 138.7374, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
+  { icao: 'YWSN', name: 'Woodstock Station', state: 'QLD', lat: -19.3589, lon: 142.7574, type: 'strip', runwayM: null, surface: 'unknown', lighted: false, fuelTypes: [], fuelPriceMult: 1.35 },
 ]
 
 // --- East Africa ------------------------------------------------------------

@@ -54,15 +54,32 @@ describe('classifyFuel', () => {
 })
 
 describe('airport physical data', () => {
-  it('every airport has a positive runway length', () => {
+  it('every airport has a positive runway length, or null when unverified', () => {
     for (const a of AIRPORTS) {
+      if (a.runwayM === null) continue
       expect(a.runwayM).toBeGreaterThan(0)
     }
   })
 
-  it('every airport has a known surface', () => {
+  it('every airport has a known surface, or unknown when unverified', () => {
     for (const a of AIRPORTS) {
-      expect(['sealed', 'gravel', 'dirt', 'grass', 'sand']).toContain(a.surface)
+      expect(['sealed', 'gravel', 'dirt', 'grass', 'sand', 'unknown']).toContain(a.surface)
+    }
+  })
+
+  it('a null runway length always pairs with an unknown surface', () => {
+    // One-way only: no runwayM means the surface can't be verified either.
+    // The reverse is expected and common — length and surface come from
+    // independent sources, so a verified length with an unverified surface
+    // (surface: 'unknown') is normal, not a data gap to fix.
+    for (const a of AIRPORTS) {
+      if (a.runwayM === null) expect(a.surface).toBe('unknown')
+    }
+  })
+
+  it('every unverified field is reported unlit', () => {
+    for (const a of AIRPORTS) {
+      if (a.surface === 'unknown') expect(a.lighted).toBe(false)
     }
   })
 

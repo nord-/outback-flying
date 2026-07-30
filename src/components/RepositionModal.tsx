@@ -10,7 +10,7 @@ import {
   suggestedFuelLitres,
 } from '../game/economy'
 import { fieldSuitability, requiredRunwayM, MARGIN_OK } from '../game/fields'
-import { money, fieldSummary, FUEL_LABEL } from '../game/format'
+import { money, fieldSummary, SURFACE_LABEL, FUEL_LABEL } from '../game/format'
 import { computeDutyMinutes } from '../game/flightlog'
 import { wouldBeOver, isOverAnyLimit } from '../game/duty'
 import type { OwnedAircraft } from '../game/types'
@@ -119,15 +119,21 @@ export function RepositionModal({ aircraft, onClose }: { aircraft: OwnedAircraft
               <div
                 className="tiny"
                 style={{
-                  color: suitability === 'short' ? 'var(--red)' : 'var(--amber)',
+                  color: suitability === 'short' || suitability === 'unknown' ? 'var(--red)' : 'var(--amber)',
                   marginTop: 6,
                 }}
               >
-                ⚠ {dest.a.icao} has {dest.a.runwayM} m of {dest.a.surface}; {spec.name} wants{' '}
-                {wantsM} m.{' '}
-                {suitability === 'short'
-                  ? 'Too short — expect heavy wear on landing.'
-                  : 'Marginal — expect some extra wear.'}
+                {suitability === 'unknown' ? (
+                  <>⚠ {dest.a.icao}'s runway data is unverified — it may be unlandable. Plan an alternate.</>
+                ) : (
+                  <>
+                    ⚠ {dest.a.icao} has {dest.a.runwayM} m of {SURFACE_LABEL[dest.a.surface]}; {spec.name} wants{' '}
+                    {wantsM} m.{' '}
+                    {suitability === 'short'
+                      ? 'Too short — expect heavy wear on landing.'
+                      : 'Marginal — expect some extra wear.'}
+                  </>
+                )}
               </div>
             )}
           </div>
